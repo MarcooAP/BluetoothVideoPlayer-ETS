@@ -8,18 +8,25 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -42,6 +49,11 @@ enum class BluetoothRole {
     SERVER,
     CLIENT
 }
+
+data class PairedBluetoothDevice(
+    val name: String,
+    val address: String
+)
 
 @SuppressLint("MissingPermission")
 @Composable
@@ -74,6 +86,14 @@ fun BluetoothSetupScreen(
         mutableStateOf(false)
     }
 
+    var pairedDevices by remember {
+        mutableStateOf(emptyList<PairedBluetoothDevice>())
+    }
+
+    var selectedDeviceAddress by rememberSaveable(role.name) {
+        mutableStateOf<String?>(null)
+    }
+
     LaunchedEffect(
         bluetoothAdapter,
         permissionsGranted
@@ -84,11 +104,35 @@ fun BluetoothSetupScreen(
                     bluetoothAdapter.isEnabled
     }
 
+    LaunchedEffect(
+        role,
+        bluetoothEnabled,
+        permissionsGranted,
+        bluetoothAdapter
+    ) {
+        if (
+            role == BluetoothRole.CLIENT &&
+            bluetoothEnabled &&
+            permissionsGranted &&
+            bluetoothAdapter != null
+        ) {
+            pairedDevices = readPairedDevices(bluetoothAdapter)
+        }
+    }
+
     val enableBluetoothLauncher =
         rememberLauncherForActivityResult(
             contract = ActivityResultContracts.StartActivityForResult()
         ) {
             bluetoothEnabled = bluetoothAdapter?.isEnabled == true
+
+            if (
+                role == BluetoothRole.CLIENT &&
+                bluetoothEnabled &&
+                bluetoothAdapter != null
+            ) {
+                pairedDevices = readPairedDevices(bluetoothAdapter)
+            }
         }
 
     val permissionLauncher =
@@ -104,6 +148,14 @@ fun BluetoothSetupScreen(
 
             if (permissionsGranted) {
                 bluetoothEnabled = bluetoothAdapter?.isEnabled == true
+
+                if (
+                    role == BluetoothRole.CLIENT &&
+                    bluetoothEnabled &&
+                    bluetoothAdapter != null
+                ) {
+                    pairedDevices = readPairedDevices(bluetoothAdapter)
+                }
             }
         }
 
@@ -120,7 +172,7 @@ fun BluetoothSetupScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 28.dp),
+                .padding(horizontal = 28.dp, vertical = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
@@ -131,7 +183,7 @@ fun BluetoothSetupScreen(
                 textAlign = TextAlign.Center
             )
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(28.dp))
 
             when {
                 bluetoothAdapter == null -> {
@@ -192,11 +244,9 @@ fun BluetoothSetupScreen(
 
                     Button(
                         onClick = {
-                            val enableIntent = Intent(
-                                BluetoothAdapter.ACTION_REQUEST_ENABLE
+                            enableBluetoothLauncher.launch(
+                                Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
                             )
-
-                            enableBluetoothLauncher.launch(enableIntent)
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -213,27 +263,44 @@ fun BluetoothSetupScreen(
 
                     Spacer(modifier = Modifier.height(24.dp))
 
-                    if (role == BluetoothRole.SERVER) {
-                        CircularProgressIndicator()
+                    when (role) {
+                        BluetoothRole.SERVER -> {
+                            CircularProgressIndicator()
 
-                        Spacer(modifier = Modifier.height(24.dp))
+                            Spacer(modifier = Modifier.height(24.dp))
 
-                        Text(
-                            text = "El dispositivo está preparado para iniciar el servidor Bluetooth.",
-                            style = MaterialTheme.typography.bodyLarge,
-                            textAlign = TextAlign.Center
-                        )
-                    } else {
-                        Text(
-                            text = "El dispositivo está preparado para buscar y conectarse con el servidor.",
-                            style = MaterialTheme.typography.bodyLarge,
-                            textAlign = TextAlign.Center
-                        )
+                            Text(
+                                text = "El dispositivo está preparado para iniciar el servidor Bluetooth.",
+                                style = MaterialTheme.typography.bodyLarge,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+
+                        BluetoothRole.CLIENT -> {
+                            ClientPairedDevicesContent(
+                                pairedDevices = pairedDevices,
+                                selectedDeviceAddress = selectedDeviceAddress,
+                                onDeviceSelected = { address ->
+                                    selectedDeviceAddress = address
+                                },
+                                onRefreshClick = {
+                                    if (bluetoothAdapter != null) {
+                                        pairedDevices =
+                                            readPairedDevices(bluetoothAdapter)
+                                    }
+                                },
+                                onOpenSettingsClick = {
+                                    context.startActivity(
+                                        Intent(Settings.ACTION_BLUETOOTH_SETTINGS)
+                                    )
+                                }
+                            )
+                        }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(28.dp))
 
             TextButton(
                 onClick = onBackClick
@@ -241,6 +308,139 @@ fun BluetoothSetupScreen(
                 Text("Volver al inicio")
             }
         }
+    }
+}
+
+@Composable
+private fun ClientPairedDevicesContent(
+    pairedDevices: List<PairedBluetoothDevice>,
+    selectedDeviceAddress: String?,
+    onDeviceSelected: (String) -> Unit,
+    onRefreshClick: () -> Unit,
+    onOpenSettingsClick: () -> Unit
+) {
+    Text(
+        text = "Dispositivos emparejados",
+        style = MaterialTheme.typography.titleMedium,
+        fontWeight = FontWeight.Bold
+    )
+
+    Spacer(modifier = Modifier.height(12.dp))
+
+    if (pairedDevices.isEmpty()) {
+        Text(
+            text = "No se encontraron dispositivos emparejados.",
+            style = MaterialTheme.typography.bodyLarge,
+            textAlign = TextAlign.Center
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Button(
+            onClick = onOpenSettingsClick,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Abrir ajustes Bluetooth")
+        }
+    } else {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 320.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            items(
+                items = pairedDevices,
+                key = { device -> device.address }
+            ) { device ->
+
+                val isSelected =
+                    device.address == selectedDeviceAddress
+
+                Card(
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                text = device.name,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            Text(
+                                text = device.address,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                onDeviceSelected(device.address)
+                            }
+                        ) {
+                            Text(
+                                text = if (isSelected) {
+                                    "Seleccionado"
+                                } else {
+                                    "Elegir"
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        OutlinedButton(
+            onClick = onRefreshClick,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Actualizar lista")
+        }
+
+        if (selectedDeviceAddress != null) {
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Text(
+                text = "Servidor seleccionado: $selectedDeviceAddress",
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Center
+            )
+        }
+    }
+}
+
+@SuppressLint("MissingPermission")
+private fun readPairedDevices(
+    bluetoothAdapter: BluetoothAdapter
+): List<PairedBluetoothDevice> {
+    return try {
+        bluetoothAdapter.bondedDevices
+            .map { device ->
+                PairedBluetoothDevice(
+                    name = device.name
+                        ?.takeIf { it.isNotBlank() }
+                        ?: "Dispositivo sin nombre",
+                    address = device.address
+                )
+            }
+            .sortedBy { device ->
+                device.name.lowercase()
+            }
+    } catch (_: SecurityException) {
+        emptyList()
     }
 }
 
