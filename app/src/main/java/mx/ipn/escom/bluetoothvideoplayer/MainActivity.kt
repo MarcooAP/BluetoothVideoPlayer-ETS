@@ -11,12 +11,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -141,96 +139,22 @@ private fun MainScreen(
 private fun ServerScreen(
     onBackClick: () -> Unit
 ) {
-    Scaffold(
-        modifier = Modifier.fillMaxSize()
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Text(
-                text = "Modo servidor",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold
-            )
-
-            Spacer(modifier = Modifier.height(32.dp))
-
-            CircularProgressIndicator()
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            Text(
-                text = "Esperando conexión de un cliente...",
-                style = MaterialTheme.typography.bodyLarge,
-                textAlign = TextAlign.Center
-            )
-
-            Spacer(modifier = Modifier.height(32.dp))
-
-            TextButton(
-                onClick = onBackClick
-            ) {
-                Text("Volver al inicio")
-            }
-        }
-    }
+    BluetoothSetupScreen(
+        role = BluetoothRole.SERVER,
+        onBackClick = onBackClick
+    )
 }
 
 @Composable
 private fun ClientScreen(
     onBackClick: () -> Unit
 ) {
-    Scaffold(
-        modifier = Modifier.fillMaxSize()
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Text(
-                text = "Modo cliente",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold
-            )
-
-            Spacer(modifier = Modifier.height(20.dp))
-
-            Text(
-                text = "Conecta este dispositivo con el teléfono que funcionará como servidor.",
-                style = MaterialTheme.typography.bodyLarge,
-                textAlign = TextAlign.Center
-            )
-
-            Spacer(modifier = Modifier.height(32.dp))
-
-            Button(
-                onClick = {
-                    // Posteriormente agregaremos aquí la búsqueda Bluetooth.
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Buscar dispositivos Bluetooth")
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            TextButton(
-                onClick = onBackClick
-            ) {
-                Text("Volver al inicio")
-            }
-        }
-    }
+    BluetoothSetupScreen(
+        role = BluetoothRole.CLIENT,
+        onBackClick = onBackClick
+    )
 }
+
 
 @Preview(showBackground = true)
 @Composable
