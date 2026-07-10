@@ -35,6 +35,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -44,7 +45,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 enum class BluetoothRole {
     SERVER,
@@ -80,6 +84,27 @@ fun BluetoothSetupScreen(
 
     val youtubeSearchService = remember(context) {
         YouTubeSearchService(context.applicationContext)
+    }
+
+    val screenScope =
+        rememberCoroutineScope()
+
+    val serverMediaLibrary =
+        remember(context) {
+            ServerMediaLibrary(
+                context.applicationContext
+            )
+        }
+
+    var selectedServerMedia by remember {
+        mutableStateOf(
+            serverMediaLibrary
+                .loadSelection()
+        )
+    }
+
+    var serverTransferBusy by rememberSaveable {
+        mutableStateOf(false)
     }
 
     var permissionsGranted by rememberSaveable(role.name) {
@@ -277,6 +302,40 @@ fun BluetoothSetupScreen(
                 bluetoothAdapter?.isEnabled == true
         }
 
+    val mediaDocumentLauncher =
+        rememberLauncherForActivityResult(
+            contract =
+                ActivityResultContracts
+                    .OpenDocument()
+        ) { uri ->
+            if (uri != null) {
+                runCatching {
+                    context.contentResolver
+                        .takePersistableUriPermission(
+                            uri,
+                            Intent
+                                .FLAG_GRANT_READ_URI_PERMISSION
+                        )
+                }
+
+                runCatching {
+                    serverMediaLibrary
+                        .saveSelection(uri)
+                }.onSuccess { selection ->
+                    selectedServerMedia =
+                        selection
+
+                    mediaStatus =
+                        "Video seleccionado: " +
+                            selection.displayName
+                }.onFailure { error ->
+                    mediaStatus =
+                        error.message
+                            ?: "No se pudo guardar el video seleccionado."
+                }
+            }
+        }
+
     val onConnectionStatusChanged:
                 (String) -> Unit = { status ->
 
@@ -290,6 +349,7 @@ fun BluetoothSetupScreen(
             searchInProgress = false
             binaryTestInProgress = false
             mediaInProgress = false
+            serverTransferBusy = false
             incomingMediaReceiver.cancel()
         }
     }
@@ -421,6 +481,28 @@ fun BluetoothSetupScreen(
                             discoverableSecondsRemaining,
                         binaryTestStatus = binaryTestStatus,
                         mediaStatus = mediaStatus,
+                        selectedMedia =
+                            selectedServerMedia,
+                        serverTransferBusy =
+                            serverTransferBusy,
+                        onSelectMediaClick = {
+                            mediaDocumentLauncher.launch(
+                                arrayOf(
+                                    "video/mp4",
+                                    "video/*"
+                                )
+                            )
+                        },
+                        onClearMediaClick = {
+                            serverMediaLibrary
+                                .clearSelection()
+
+                            selectedServerMedia =
+                                null
+
+                            mediaStatus =
+                                "Selección del servidor eliminada."
+                        },
                         onMakeDiscoverableClick = {
                             val intent =
                                 Intent(
@@ -440,6 +522,7 @@ fun BluetoothSetupScreen(
                             receivedMessage = ""
                             resetBinaryTest()
                             resetMediaTransfer(clearPlayer = true)
+                            serverTransferBusy = false
                             connectionStatus =
                                 "Iniciando servidor..."
                             connectionActive = true
@@ -675,6 +758,191 @@ fun BluetoothSetupScreen(
                                                     "verificación del cliente."
                                         }
 
+                                        BluetoothMessage.SelectedMediaRequest -> {
+                                            val selection =
+                                                selectedServerMedia
+
+                                            when {
+                                                selection == null -> {
+                                                    val errorMessage =
+                                                        "El servidor no tiene un MP4 seleccionado."
+
+                                                    mediaStatus =
+                                                        errorMessage
+
+                                                    connectionManager
+                                                        .sendMessage(
+                                                            BluetoothProtocol
+                                                                .error(
+                                                                    errorMessage
+                                                                )
+                                                        )
+                                                }
+
+                                                serverTransferBusy -> {
+                                                    connectionManager
+                                                        .sendMessage(
+                                                            BluetoothProtocol
+                                                                .error(
+                                                                    "El servidor ya está enviando un video."
+                                                                )
+                                                        )
+                                                }
+
+                                                else -> {
+                                                    serverTransferBusy =
+                                                        true
+
+                                                    mediaStatus =
+                                                        "Preparando ${selection.displayName}..."
+
+                                                    connectionStatus =
+                                                        "Preparando video seleccionado..."
+
+                                                    screenScope.launch(
+                                                        Dispatchers.IO
+                                                    ) {
+                                                        var prepared:
+                                                            PreparedServerMedia? =
+                                                            null
+
+                                                        try {
+                                                            var lastPreparePercent =
+                                                                -10
+
+                                                            val ready =
+                                                                serverMediaLibrary
+                                                                    .prepare(
+                                                                        selection
+                                                                    ) {
+                                                                        copied,
+                                                                        expected ->
+
+                                                                        if (
+                                                                            expected >
+                                                                            0L
+                                                                        ) {
+                                                                            val percent =
+                                                                                (
+                                                                                    copied *
+                                                                                        100L /
+                                                                                        expected
+                                                                                    )
+                                                                                    .coerceIn(
+                                                                                        0L,
+                                                                                        100L
+                                                                                    )
+                                                                                    .toInt()
+
+                                                                            if (
+                                                                                percent >=
+                                                                                lastPreparePercent +
+                                                                                    10
+                                                                            ) {
+                                                                                lastPreparePercent =
+                                                                                    percent
+
+                                                                                screenScope.launch(
+                                                                                    Dispatchers.Main
+                                                                                ) {
+                                                                                    mediaStatus =
+                                                                                        "Preparando archivo: $percent%"
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+
+                                                            prepared =
+                                                                ready
+
+                                                            withContext(
+                                                                Dispatchers.Main
+                                                            ) {
+                                                                mediaStatus =
+                                                                    "Enviando ${ready.displayName}..."
+                                                            }
+
+                                                            var lastSentPercent =
+                                                                -5
+
+                                                            transferPreparedMedia(
+                                                                connectionManager =
+                                                                    connectionManager,
+                                                                preparedMedia =
+                                                                    ready
+                                                            ) {
+                                                                _,
+                                                                _,
+                                                                percent ->
+
+                                                                if (
+                                                                    percent >=
+                                                                    lastSentPercent +
+                                                                        5 ||
+                                                                    percent ==
+                                                                    100
+                                                                ) {
+                                                                    lastSentPercent =
+                                                                        percent
+
+                                                                    screenScope.launch(
+                                                                        Dispatchers.Main
+                                                                    ) {
+                                                                        mediaStatus =
+                                                                            "Enviando video: $percent%"
+                                                                    }
+                                                                }
+                                                            }
+
+                                                            withContext(
+                                                                Dispatchers.Main
+                                                            ) {
+                                                                mediaStatus =
+                                                                    "Video enviado; esperando verificación del cliente."
+
+                                                                connectionStatus =
+                                                                    "Conectado - archivo enviado"
+                                                            }
+                                                        } catch (
+                                                            error: Exception
+                                                        ) {
+                                                            val errorMessage =
+                                                                error.message
+                                                                    ?: "No se pudo enviar el video seleccionado."
+
+                                                            connectionManager
+                                                                .sendMessageAwait(
+                                                                    BluetoothProtocol
+                                                                        .error(
+                                                                            errorMessage
+                                                                        )
+                                                                )
+
+                                                            withContext(
+                                                                Dispatchers.Main
+                                                            ) {
+                                                                mediaStatus =
+                                                                    errorMessage
+
+                                                                connectionStatus =
+                                                                    "Conectado - error al enviar video"
+                                                            }
+                                                        } finally {
+                                                            prepared
+                                                                ?.delete()
+
+                                                            withContext(
+                                                                Dispatchers.Main
+                                                            ) {
+                                                                serverTransferBusy =
+                                                                    false
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
                                         is BluetoothMessage.MediaResult -> {
                                             mediaStatus = message.message
 
@@ -705,6 +973,7 @@ fun BluetoothSetupScreen(
                             connectionStatus =
                                 "Servidor detenido"
                             receivedMessage = ""
+                            serverTransferBusy = false
                             resetBinaryTest()
                             resetMediaTransfer(clearPlayer = true)
                         }
@@ -1025,6 +1294,22 @@ fun BluetoothSetupScreen(
                                 }
                             )
                         },
+                        onSelectedMediaClick = {
+                            mediaInProgress = true
+                            mediaProgress = 0
+                            mediaStatus =
+                                "Solicitando el video seleccionado del servidor..."
+                            receivedVideoPath = null
+
+                            connectionManager?.sendMessage(
+                                BluetoothProtocol
+                                    .selectedMediaRequest(),
+                                onError = { error ->
+                                    mediaInProgress = false
+                                    mediaStatus = error
+                                }
+                            )
+                        },
                         onSampleMediaClick = {
                             mediaInProgress = true
                             mediaProgress = 0
@@ -1062,6 +1347,10 @@ private fun ServerContent(
     discoverableSecondsRemaining: Int,
     binaryTestStatus: String,
     mediaStatus: String,
+    selectedMedia: ServerMediaSelection?,
+    serverTransferBusy: Boolean,
+    onSelectMediaClick: () -> Unit,
+    onClearMediaClick: () -> Unit,
     onMakeDiscoverableClick: () -> Unit,
     onStartServerClick: () -> Unit,
     onStopClick: () -> Unit
@@ -1073,6 +1362,95 @@ private fun ServerContent(
     )
 
     Spacer(modifier = Modifier.height(16.dp))
+
+    Text(
+        text = "Biblioteca del servidor",
+        style = MaterialTheme.typography.titleMedium,
+        fontWeight = FontWeight.Bold
+    )
+
+    Spacer(modifier = Modifier.height(10.dp))
+
+    Card(
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            if (selectedMedia == null) {
+                Text(
+                    text =
+                        "Todavía no hay un MP4 seleccionado."
+                )
+
+                Spacer(
+                    modifier =
+                        Modifier.height(6.dp)
+                )
+
+                Text(
+                    text =
+                        "Elige un video corto para enviarlo al cliente.",
+                    style =
+                        MaterialTheme.typography.bodySmall
+                )
+            } else {
+                Text(
+                    text =
+                        selectedMedia.displayName,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(
+                    modifier =
+                        Modifier.height(6.dp)
+                )
+
+                Text(
+                    text =
+                        formatMediaSize(
+                            selectedMedia
+                                .declaredSizeBytes
+                        ),
+                    style =
+                        MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+    }
+
+    Spacer(modifier = Modifier.height(10.dp))
+
+    Button(
+        onClick = onSelectMediaClick,
+        enabled = !serverTransferBusy,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(
+            if (selectedMedia == null) {
+                "Seleccionar MP4"
+            } else {
+                "Cambiar MP4 seleccionado"
+            }
+        )
+    }
+
+    if (selectedMedia != null) {
+        Spacer(
+            modifier =
+                Modifier.height(8.dp)
+        )
+
+        OutlinedButton(
+            onClick = onClearMediaClick,
+            enabled = !serverTransferBusy,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Quitar selección")
+        }
+    }
+
+    Spacer(modifier = Modifier.height(18.dp))
 
     if (discoverableSecondsRemaining > 0) {
         val minutes =
@@ -1206,6 +1584,7 @@ private fun ClientContent(
     onSearchClick: () -> Unit,
     onPlayClick: (YouTubeVideoResult) -> Unit,
     onBinaryTestClick: () -> Unit,
+    onSelectedMediaClick: () -> Unit,
     onSampleMediaClick: () -> Unit
 ) {
     Text(
@@ -1375,7 +1754,7 @@ private fun ClientContent(
         Spacer(modifier = Modifier.height(24.dp))
 
         Text(
-            text = "Prueba de reproducción MP4",
+            text = "Reproducción por Bluetooth",
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold
         )
@@ -1383,11 +1762,21 @@ private fun ClientContent(
         Spacer(modifier = Modifier.height(10.dp))
 
         Button(
+            onClick = onSelectedMediaClick,
+            enabled = !mediaInProgress,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Solicitar video elegido en el servidor")
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        OutlinedButton(
             onClick = onSampleMediaClick,
             enabled = !mediaInProgress,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Solicitar y reproducir MP4 de prueba")
+            Text("Usar MP4 interno de prueba")
         }
 
         if (mediaInProgress) {
@@ -1552,6 +1941,33 @@ private fun readPairedDevices(
     } catch (_: SecurityException) {
         emptyList()
     }
+}
+
+private fun formatMediaSize(
+    bytes: Long
+): String {
+    if (bytes < 0L) {
+        return "Tamaño no informado"
+    }
+
+    if (bytes < 1024L) {
+        return "$bytes bytes"
+    }
+
+    if (bytes < 1024L * 1024L) {
+        return "${bytes / 1024L} KB"
+    }
+
+    val megabytes =
+        bytes.toDouble() /
+            1024.0 /
+            1024.0
+
+    return String.format(
+        java.util.Locale.US,
+        "%.1f MB",
+        megabytes
+    )
 }
 
 private fun requiredBluetoothPermissions(

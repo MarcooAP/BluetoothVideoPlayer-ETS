@@ -49,6 +49,8 @@ sealed class BluetoothMessage {
 
     data object SampleMediaRequest : BluetoothMessage()
 
+    data object SelectedMediaRequest : BluetoothMessage()
+
     data class MediaStart(
         val fileName: String,
         val totalBytes: Long,
@@ -86,6 +88,7 @@ object BluetoothProtocol {
     private const val TYPE_BINARY_TEST_INFO = "BINARY_TEST_INFO"
     private const val TYPE_BINARY_TEST_RESULT = "BINARY_TEST_RESULT"
     private const val TYPE_SAMPLE_MEDIA_REQUEST = "SAMPLE_MEDIA_REQUEST"
+    private const val TYPE_SELECTED_MEDIA_REQUEST = "SELECTED_MEDIA_REQUEST"
     private const val TYPE_MEDIA_START = "MEDIA_START"
     private const val TYPE_MEDIA_END = "MEDIA_END"
     private const val TYPE_MEDIA_RESULT = "MEDIA_RESULT"
@@ -191,6 +194,12 @@ object BluetoothProtocol {
     fun sampleMediaRequest(): String {
         return JSONObject()
             .put("type", TYPE_SAMPLE_MEDIA_REQUEST)
+            .toString()
+    }
+
+    fun selectedMediaRequest(): String {
+        return JSONObject()
+            .put("type", TYPE_SELECTED_MEDIA_REQUEST)
             .toString()
     }
 
@@ -325,6 +334,10 @@ object BluetoothProtocol {
 
                 TYPE_SAMPLE_MEDIA_REQUEST -> {
                     BluetoothMessage.SampleMediaRequest
+                }
+
+                TYPE_SELECTED_MEDIA_REQUEST -> {
+                    BluetoothMessage.SelectedMediaRequest
                 }
 
                 TYPE_MEDIA_START -> {

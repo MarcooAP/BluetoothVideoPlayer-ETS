@@ -17,6 +17,7 @@ import java.util.UUID
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 
@@ -246,6 +247,44 @@ class BluetoothConnectionManager(
         )
     }
 
+    /**
+     * Envía un mensaje respetando el orden del único hilo escritor
+     * y espera a que la trama haya sido escrita.
+     *
+     * Debe llamarse desde un hilo secundario.
+     */
+    fun sendMessageAwait(
+        message: String
+    ): Result<Unit> {
+        return sendFrameAwait(
+            frameType = FRAME_TYPE_TEXT,
+            payload = message.toByteArray(StandardCharsets.UTF_8)
+        )
+    }
+
+    /**
+     * Envía datos binarios con control de flujo. Cada llamada espera
+     * a que el bloque anterior haya salido antes de leer el siguiente.
+     *
+     * Debe llamarse desde un hilo secundario.
+     */
+    fun sendBinaryAwait(
+        data: ByteArray
+    ): Result<Unit> {
+        if (data.isEmpty()) {
+            return Result.failure(
+                IllegalArgumentException(
+                    "No se pueden enviar datos binarios vacíos."
+                )
+            )
+        }
+
+        return sendFrameAwait(
+            frameType = FRAME_TYPE_BINARY,
+            payload = data
+        )
+    }
+
     fun isConnected(): Boolean {
         return connectedSocket?.isConnected == true &&
                 connectedInput != null &&
@@ -392,6 +431,72 @@ class BluetoothConnectionManager(
             mainHandler.post {
                 onError("El canal de envío ya fue cerrado.")
             }
+        }
+    }
+
+    private fun sendFrameAwait(
+        frameType: Int,
+        payload: ByteArray
+    ): Result<Unit> {
+        if (payload.size > MAX_FRAME_SIZE) {
+            return Result.failure(
+                IllegalArgumentException(
+                    "La trama supera el máximo de $MAX_FRAME_SIZE bytes."
+                )
+            )
+        }
+
+        if (!isConnected()) {
+            return Result.failure(
+                IOException(
+                    "No existe una conexión Bluetooth activa."
+                )
+            )
+        }
+
+        val sessionId = sessionCounter.get()
+        val executor = sendExecutor
+
+        if (executor == null || executor.isShutdown) {
+            return Result.failure(
+                IOException(
+                    "El canal de envío no está disponible."
+                )
+            )
+        }
+
+        /*
+         * Evita un posible bloqueo si en el futuro este método
+         * se llama desde el propio hilo escritor.
+         */
+        if (
+            Thread.currentThread().name ==
+            "BluetoothWriterThread"
+        ) {
+            return runCatching {
+                writeFrame(
+                    sessionId = sessionId,
+                    frameType = frameType,
+                    payload = payload
+                )
+            }
+        }
+
+        return try {
+            val future = executor.submit {
+                writeFrame(
+                    sessionId = sessionId,
+                    frameType = frameType,
+                    payload = payload
+                )
+            }
+
+            future.get(30L, TimeUnit.SECONDS)
+            Result.success(Unit)
+        } catch (error: Exception) {
+            Result.failure(
+                error.cause ?: error
+            )
         }
     }
 
