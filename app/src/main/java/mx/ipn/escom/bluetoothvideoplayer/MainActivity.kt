@@ -11,11 +11,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -24,6 +30,12 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import mx.ipn.escom.bluetoothvideoplayer.ui.theme.BluetoothVideoPlayerTheme
 
+private enum class AppScreen {
+    HOME,
+    SERVER,
+    CLIENT
+}
+
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -31,22 +43,56 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             BluetoothVideoPlayerTheme {
-                MainScreen()
+                BluetoothVideoPlayerApp()
             }
         }
     }
 }
 
 @Composable
-fun MainScreen(
-    modifier: Modifier = Modifier,
-    onServerClick: () -> Unit = {},
-    onClientClick: () -> Unit = {}
+private fun BluetoothVideoPlayerApp() {
+    var currentScreen by rememberSaveable {
+        mutableStateOf(AppScreen.HOME.name)
+    }
+
+    when (currentScreen) {
+        AppScreen.SERVER.name -> {
+            ServerScreen(
+                onBackClick = {
+                    currentScreen = AppScreen.HOME.name
+                }
+            )
+        }
+
+        AppScreen.CLIENT.name -> {
+            ClientScreen(
+                onBackClick = {
+                    currentScreen = AppScreen.HOME.name
+                }
+            )
+        }
+
+        else -> {
+            MainScreen(
+                onServerClick = {
+                    currentScreen = AppScreen.SERVER.name
+                },
+                onClientClick = {
+                    currentScreen = AppScreen.CLIENT.name
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun MainScreen(
+    onServerClick: () -> Unit,
+    onClientClick: () -> Unit
 ) {
     Scaffold(
-        modifier = modifier.fillMaxSize()
+        modifier = Modifier.fillMaxSize()
     ) { innerPadding ->
-
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -91,10 +137,108 @@ fun MainScreen(
     }
 }
 
+@Composable
+private fun ServerScreen(
+    onBackClick: () -> Unit
+) {
+    Scaffold(
+        modifier = Modifier.fillMaxSize()
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = "Modo servidor",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold
+            )
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            CircularProgressIndicator()
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Text(
+                text = "Esperando conexión de un cliente...",
+                style = MaterialTheme.typography.bodyLarge,
+                textAlign = TextAlign.Center
+            )
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            TextButton(
+                onClick = onBackClick
+            ) {
+                Text("Volver al inicio")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ClientScreen(
+    onBackClick: () -> Unit
+) {
+    Scaffold(
+        modifier = Modifier.fillMaxSize()
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = "Modo cliente",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold
+            )
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            Text(
+                text = "Conecta este dispositivo con el teléfono que funcionará como servidor.",
+                style = MaterialTheme.typography.bodyLarge,
+                textAlign = TextAlign.Center
+            )
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            Button(
+                onClick = {
+                    // Posteriormente agregaremos aquí la búsqueda Bluetooth.
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Buscar dispositivos Bluetooth")
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            TextButton(
+                onClick = onBackClick
+            ) {
+                Text("Volver al inicio")
+            }
+        }
+    }
+}
+
 @Preview(showBackground = true)
 @Composable
 private fun MainScreenPreview() {
     BluetoothVideoPlayerTheme {
-        MainScreen()
+        MainScreen(
+            onServerClick = {},
+            onClientClick = {}
+        )
     }
 }
