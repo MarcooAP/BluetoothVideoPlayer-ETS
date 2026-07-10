@@ -31,6 +31,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -64,10 +65,17 @@ fun BluetoothSetupScreen(
     val context = LocalContext.current
 
     val bluetoothManager = remember(context) {
-        context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+        context.getSystemService(Context.BLUETOOTH_SERVICE)
+                as? BluetoothManager
     }
 
     val bluetoothAdapter = bluetoothManager?.adapter
+
+    val connectionManager = remember(bluetoothAdapter) {
+        bluetoothAdapter?.let { adapter ->
+            BluetoothConnectionManager(adapter)
+        }
+    }
 
     var permissionsGranted by rememberSaveable(role.name) {
         mutableStateOf(
@@ -92,6 +100,28 @@ fun BluetoothSetupScreen(
 
     var selectedDeviceAddress by rememberSaveable(role.name) {
         mutableStateOf<String?>(null)
+    }
+
+    var connectionStatus by rememberSaveable(role.name) {
+        mutableStateOf("Sin conexión")
+    }
+
+    var receivedMessage by rememberSaveable(role.name) {
+        mutableStateOf("")
+    }
+
+    var connectionActive by rememberSaveable(role.name) {
+        mutableStateOf(false)
+    }
+
+    /*
+     * Cuando se abandona la pantalla se cierran los sockets
+     * para no dejar conexiones o hilos abiertos.
+     */
+    DisposableEffect(connectionManager, role) {
+        onDispose {
+            connectionManager?.close()
+        }
     }
 
     LaunchedEffect(
@@ -124,14 +154,16 @@ fun BluetoothSetupScreen(
         rememberLauncherForActivityResult(
             contract = ActivityResultContracts.StartActivityForResult()
         ) {
-            bluetoothEnabled = bluetoothAdapter?.isEnabled == true
+            bluetoothEnabled =
+                bluetoothAdapter?.isEnabled == true
 
             if (
                 role == BluetoothRole.CLIENT &&
                 bluetoothEnabled &&
                 bluetoothAdapter != null
             ) {
-                pairedDevices = readPairedDevices(bluetoothAdapter)
+                pairedDevices =
+                    readPairedDevices(bluetoothAdapter)
             }
         }
 
@@ -139,23 +171,42 @@ fun BluetoothSetupScreen(
         rememberLauncherForActivityResult(
             contract = ActivityResultContracts.RequestMultiplePermissions()
         ) {
-            permissionsGranted = hasRequiredBluetoothPermissions(
-                context = context,
-                role = role
-            )
+            permissionsGranted =
+                hasRequiredBluetoothPermissions(
+                    context = context,
+                    role = role
+                )
 
             permissionDenied = !permissionsGranted
 
             if (permissionsGranted) {
-                bluetoothEnabled = bluetoothAdapter?.isEnabled == true
+                bluetoothEnabled =
+                    bluetoothAdapter?.isEnabled == true
 
                 if (
                     role == BluetoothRole.CLIENT &&
                     bluetoothEnabled &&
                     bluetoothAdapter != null
                 ) {
-                    pairedDevices = readPairedDevices(bluetoothAdapter)
+                    pairedDevices =
+                        readPairedDevices(bluetoothAdapter)
                 }
+            }
+        }
+
+    /*
+     * Los callbacks del administrador llegan al hilo principal.
+     * Aquí actualizamos lo que se muestra en pantalla.
+     */
+    val onConnectionStatusChanged: (String) -> Unit =
+        { status ->
+            connectionStatus = status
+
+            if (
+                status.startsWith("Error") ||
+                status == "Conexión finalizada"
+            ) {
+                connectionActive = false
             }
         }
 
@@ -172,7 +223,10 @@ fun BluetoothSetupScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 28.dp, vertical = 24.dp),
+                .padding(
+                    horizontal = 28.dp,
+                    vertical = 24.dp
+                ),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
@@ -198,10 +252,10 @@ fun BluetoothSetupScreen(
                     Text(
                         text = when (role) {
                             BluetoothRole.SERVER ->
-                                "El servidor necesita permiso para conectarse y hacerse visible mediante Bluetooth."
+                                "El servidor necesita permisos para aceptar conexiones Bluetooth."
 
                             BluetoothRole.CLIENT ->
-                                "El cliente necesita permiso para buscar y conectarse con dispositivos Bluetooth."
+                                "El cliente necesita permisos para consultar y conectarse con dispositivos Bluetooth."
                         },
                         style = MaterialTheme.typography.bodyLarge,
                         textAlign = TextAlign.Center
@@ -245,7 +299,9 @@ fun BluetoothSetupScreen(
                     Button(
                         onClick = {
                             enableBluetoothLauncher.launch(
-                                Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
+                                Intent(
+                                    BluetoothAdapter.ACTION_REQUEST_ENABLE
+                                )
                             )
                         },
                         modifier = Modifier.fillMaxWidth()
@@ -254,49 +310,80 @@ fun BluetoothSetupScreen(
                     }
                 }
 
-                else -> {
-                    Text(
-                        text = "Bluetooth listo",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold
-                    )
+                role == BluetoothRole.SERVER -> {
+                    ServerConnectionContent(
+                        connectionStatus = connectionStatus,
+                        receivedMessage = receivedMessage,
+                        connectionActive = connectionActive,
+                        onStartServerClick = {
+                            receivedMessage = ""
+                            connectionStatus =
+                                "Iniciando servidor..."
+                            connectionActive = true
 
-                    Spacer(modifier = Modifier.height(24.dp))
-
-                    when (role) {
-                        BluetoothRole.SERVER -> {
-                            CircularProgressIndicator()
-
-                            Spacer(modifier = Modifier.height(24.dp))
-
-                            Text(
-                                text = "El dispositivo está preparado para iniciar el servidor Bluetooth.",
-                                style = MaterialTheme.typography.bodyLarge,
-                                textAlign = TextAlign.Center
-                            )
-                        }
-
-                        BluetoothRole.CLIENT -> {
-                            ClientPairedDevicesContent(
-                                pairedDevices = pairedDevices,
-                                selectedDeviceAddress = selectedDeviceAddress,
-                                onDeviceSelected = { address ->
-                                    selectedDeviceAddress = address
-                                },
-                                onRefreshClick = {
-                                    if (bluetoothAdapter != null) {
-                                        pairedDevices =
-                                            readPairedDevices(bluetoothAdapter)
-                                    }
-                                },
-                                onOpenSettingsClick = {
-                                    context.startActivity(
-                                        Intent(Settings.ACTION_BLUETOOTH_SETTINGS)
-                                    )
+                            connectionManager?.startServer(
+                                onStatusChanged =
+                                    onConnectionStatusChanged,
+                                onMessageReceived = { message ->
+                                    receivedMessage = message
                                 }
                             )
+                        },
+                        onStopClick = {
+                            connectionManager?.close()
+                            connectionActive = false
+                            connectionStatus =
+                                "Servidor detenido"
+                            receivedMessage = ""
                         }
-                    }
+                    )
+                }
+
+                else -> {
+                    ClientConnectionContent(
+                        pairedDevices = pairedDevices,
+                        selectedDeviceAddress =
+                            selectedDeviceAddress,
+                        connectionStatus = connectionStatus,
+                        receivedMessage = receivedMessage,
+                        connectionActive = connectionActive,
+                        onDeviceSelected = { address ->
+                            selectedDeviceAddress = address
+                        },
+                        onRefreshClick = {
+                            pairedDevices =
+                                readPairedDevices(bluetoothAdapter)
+                        },
+                        onOpenSettingsClick = {
+                            context.startActivity(
+                                Intent(
+                                    Settings.ACTION_BLUETOOTH_SETTINGS
+                                )
+                            )
+                        },
+                        onConnectClick = { address ->
+                            receivedMessage = ""
+                            connectionStatus =
+                                "Preparando conexión..."
+                            connectionActive = true
+
+                            connectionManager?.connectToServer(
+                                deviceAddress = address,
+                                onStatusChanged =
+                                    onConnectionStatusChanged,
+                                onMessageReceived = { message ->
+                                    receivedMessage = message
+                                }
+                            )
+                        },
+                        onDisconnectClick = {
+                            connectionManager?.close()
+                            connectionActive = false
+                            connectionStatus =
+                                "Conexión detenida"
+                            receivedMessage = ""
+                        }
+                    )
                 }
             }
 
@@ -312,13 +399,85 @@ fun BluetoothSetupScreen(
 }
 
 @Composable
-private fun ClientPairedDevicesContent(
+private fun ServerConnectionContent(
+    connectionStatus: String,
+    receivedMessage: String,
+    connectionActive: Boolean,
+    onStartServerClick: () -> Unit,
+    onStopClick: () -> Unit
+) {
+    Text(
+        text = "Bluetooth listo",
+        style = MaterialTheme.typography.titleLarge,
+        fontWeight = FontWeight.Bold
+    )
+
+    Spacer(modifier = Modifier.height(20.dp))
+
+    if (
+        connectionStatus.contains("esperando", ignoreCase = true) ||
+        connectionStatus.contains("iniciando", ignoreCase = true)
+    ) {
+        CircularProgressIndicator()
+
+        Spacer(modifier = Modifier.height(18.dp))
+    }
+
+    Text(
+        text = connectionStatus,
+        style = MaterialTheme.typography.bodyLarge,
+        textAlign = TextAlign.Center
+    )
+
+    Spacer(modifier = Modifier.height(20.dp))
+
+    if (!connectionActive) {
+        Button(
+            onClick = onStartServerClick,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Iniciar servidor Bluetooth")
+        }
+    } else {
+        OutlinedButton(
+            onClick = onStopClick,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Detener servidor")
+        }
+    }
+
+    if (receivedMessage.isNotBlank()) {
+        Spacer(modifier = Modifier.height(20.dp))
+
+        MessageCard(
+            title = "Mensaje recibido",
+            message = receivedMessage
+        )
+    }
+}
+
+@Composable
+private fun ClientConnectionContent(
     pairedDevices: List<PairedBluetoothDevice>,
     selectedDeviceAddress: String?,
+    connectionStatus: String,
+    receivedMessage: String,
+    connectionActive: Boolean,
     onDeviceSelected: (String) -> Unit,
     onRefreshClick: () -> Unit,
-    onOpenSettingsClick: () -> Unit
+    onOpenSettingsClick: () -> Unit,
+    onConnectClick: (String) -> Unit,
+    onDisconnectClick: () -> Unit
 ) {
+    Text(
+        text = "Bluetooth listo",
+        style = MaterialTheme.typography.titleLarge,
+        fontWeight = FontWeight.Bold
+    )
+
+    Spacer(modifier = Modifier.height(16.dp))
+
     Text(
         text = "Dispositivos emparejados",
         style = MaterialTheme.typography.titleMedium,
@@ -346,8 +505,9 @@ private fun ClientPairedDevicesContent(
         LazyColumn(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 320.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+                .heightIn(max = 260.dp),
+            verticalArrangement =
+                Arrangement.spacedBy(10.dp)
         ) {
             items(
                 items = pairedDevices,
@@ -364,29 +524,35 @@ private fun ClientPairedDevicesContent(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment =
+                            Alignment.CenterVertically
                     ) {
                         Column(
                             modifier = Modifier.weight(1f)
                         ) {
                             Text(
                                 text = device.name,
-                                style = MaterialTheme.typography.titleSmall,
+                                style =
+                                    MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold
                             )
 
-                            Spacer(modifier = Modifier.height(4.dp))
+                            Spacer(
+                                modifier = Modifier.height(4.dp)
+                            )
 
                             Text(
                                 text = device.address,
-                                style = MaterialTheme.typography.bodySmall
+                                style =
+                                    MaterialTheme.typography.bodySmall
                             )
                         }
 
                         OutlinedButton(
                             onClick = {
                                 onDeviceSelected(device.address)
-                            }
+                            },
+                            enabled = !connectionActive
                         ) {
                             Text(
                                 text = if (isSelected) {
@@ -401,22 +567,84 @@ private fun ClientPairedDevicesContent(
             }
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         OutlinedButton(
             onClick = onRefreshClick,
+            enabled = !connectionActive,
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("Actualizar lista")
         }
+    }
 
-        if (selectedDeviceAddress != null) {
-            Spacer(modifier = Modifier.height(12.dp))
+    if (
+        selectedDeviceAddress != null &&
+        !connectionActive
+    ) {
+        Spacer(modifier = Modifier.height(14.dp))
+
+        Button(
+            onClick = {
+                onConnectClick(selectedDeviceAddress)
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Conectar con el servidor")
+        }
+    }
+
+    if (connectionActive) {
+        Spacer(modifier = Modifier.height(14.dp))
+
+        OutlinedButton(
+            onClick = onDisconnectClick,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Desconectar")
+        }
+    }
+
+    Spacer(modifier = Modifier.height(18.dp))
+
+    Text(
+        text = connectionStatus,
+        style = MaterialTheme.typography.bodyLarge,
+        textAlign = TextAlign.Center
+    )
+
+    if (receivedMessage.isNotBlank()) {
+        Spacer(modifier = Modifier.height(18.dp))
+
+        MessageCard(
+            title = "Respuesta del servidor",
+            message = receivedMessage
+        )
+    }
+}
+
+@Composable
+private fun MessageCard(
+    title: String,
+    message: String
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "Servidor seleccionado: $selectedDeviceAddress",
-                style = MaterialTheme.typography.bodyMedium,
-                textAlign = TextAlign.Center
+                text = message,
+                style = MaterialTheme.typography.bodyMedium
             )
         }
     }
@@ -447,7 +675,9 @@ private fun readPairedDevices(
 private fun requiredBluetoothPermissions(
     role: BluetoothRole
 ): Array<String> {
-    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+    return if (
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    ) {
         when (role) {
             BluetoothRole.SERVER -> arrayOf(
                 Manifest.permission.BLUETOOTH_CONNECT,
