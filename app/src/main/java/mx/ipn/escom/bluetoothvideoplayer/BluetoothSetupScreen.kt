@@ -45,6 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.delay
 
 enum class BluetoothRole {
     SERVER,
@@ -114,9 +115,23 @@ fun BluetoothSetupScreen(
         mutableStateOf(false)
     }
 
+    var discoverableSecondsRemaining by rememberSaveable(role.name) {
+        mutableStateOf(0)
+    }
+
     /*
-     * Cuando se abandona la pantalla se cierran los sockets
-     * para no dejar conexiones o hilos abiertos.
+     * Reduce la cuenta regresiva mientras el servidor
+     * permanece visible para dispositivos nuevos.
+     */
+    LaunchedEffect(discoverableSecondsRemaining) {
+        if (discoverableSecondsRemaining > 0) {
+            delay(1000L)
+            discoverableSecondsRemaining -= 1
+        }
+    }
+
+    /*
+     * Cierra sockets e hilos cuando se abandona la pantalla.
      */
     DisposableEffect(connectionManager, role) {
         onDispose {
@@ -195,9 +210,24 @@ fun BluetoothSetupScreen(
         }
 
     /*
-     * Los callbacks del administrador llegan al hilo principal.
-     * Aquí actualizamos lo que se muestra en pantalla.
+     * Android devuelve como resultCode la cantidad de segundos
+     * durante los cuales aceptó hacer visible el dispositivo.
      */
+    val discoverableLauncher =
+        rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.StartActivityForResult()
+        ) { result ->
+            discoverableSecondsRemaining =
+                if (result.resultCode > 0) {
+                    result.resultCode
+                } else {
+                    0
+                }
+
+            bluetoothEnabled =
+                bluetoothAdapter?.isEnabled == true
+        }
+
     val onConnectionStatusChanged: (String) -> Unit =
         { status ->
             connectionStatus = status
@@ -252,7 +282,7 @@ fun BluetoothSetupScreen(
                     Text(
                         text = when (role) {
                             BluetoothRole.SERVER ->
-                                "El servidor necesita permisos para aceptar conexiones Bluetooth."
+                                "El servidor necesita permisos para aceptar conexiones y hacerse visible mediante Bluetooth."
 
                             BluetoothRole.CLIENT ->
                                 "El cliente necesita permisos para consultar y conectarse con dispositivos Bluetooth."
@@ -315,6 +345,23 @@ fun BluetoothSetupScreen(
                         connectionStatus = connectionStatus,
                         receivedMessage = receivedMessage,
                         connectionActive = connectionActive,
+                        discoverableSecondsRemaining =
+                            discoverableSecondsRemaining,
+                        onMakeDiscoverableClick = {
+                            val discoverableIntent =
+                                Intent(
+                                    BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE
+                                ).apply {
+                                    putExtra(
+                                        BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION,
+                                        300
+                                    )
+                                }
+
+                            discoverableLauncher.launch(
+                                discoverableIntent
+                            )
+                        },
                         onStartServerClick = {
                             receivedMessage = ""
                             connectionStatus =
@@ -403,9 +450,20 @@ private fun ServerConnectionContent(
     connectionStatus: String,
     receivedMessage: String,
     connectionActive: Boolean,
+    discoverableSecondsRemaining: Int,
+    onMakeDiscoverableClick: () -> Unit,
     onStartServerClick: () -> Unit,
     onStopClick: () -> Unit
 ) {
+    val minutes =
+        discoverableSecondsRemaining / 60
+
+    val seconds =
+        discoverableSecondsRemaining % 60
+
+    val countdownText =
+        "$minutes:${seconds.toString().padStart(2, '0')}"
+
     Text(
         text = "Bluetooth listo",
         style = MaterialTheme.typography.titleLarge,
@@ -414,9 +472,68 @@ private fun ServerConnectionContent(
 
     Spacer(modifier = Modifier.height(20.dp))
 
+    if (discoverableSecondsRemaining > 0) {
+        Card(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                horizontalAlignment =
+                    Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "Servidor visible",
+                    style =
+                        MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Text(
+                    text = "Tiempo restante: $countdownText",
+                    style =
+                        MaterialTheme.typography.bodyLarge
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Text(
+                    text = "El cliente puede localizar y vincular este teléfono.",
+                    style =
+                        MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+    } else {
+        OutlinedButton(
+            onClick = onMakeDiscoverableClick,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Hacer visible durante 5 minutos")
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            text = "Solo es necesario para vincular un dispositivo nuevo.",
+            style = MaterialTheme.typography.bodySmall,
+            textAlign = TextAlign.Center
+        )
+    }
+
+    Spacer(modifier = Modifier.height(20.dp))
+
     if (
-        connectionStatus.contains("esperando", ignoreCase = true) ||
-        connectionStatus.contains("iniciando", ignoreCase = true)
+        connectionStatus.contains(
+            "esperando",
+            ignoreCase = true
+        ) ||
+        connectionStatus.contains(
+            "iniciando",
+            ignoreCase = true
+        )
     ) {
         CircularProgressIndicator()
 
