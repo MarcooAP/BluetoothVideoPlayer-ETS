@@ -14,6 +14,9 @@ import java.io.EOFException
 import java.io.IOException
 import java.nio.charset.StandardCharsets
 import java.util.UUID
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 
@@ -22,81 +25,47 @@ class BluetoothConnectionManager(
 ) {
 
     companion object {
-        private const val SERVICE_NAME =
-            "BluetoothVideoPlayerETS"
+        private const val SERVICE_NAME = "BluetoothVideoPlayerETS"
 
         val SERVICE_UUID: UUID =
-            UUID.fromString(
-                "7a51f5d0-86a4-4d8b-aed6-24a06477c721"
-            )
+            UUID.fromString("7a51f5d0-86a4-4d8b-aed6-24a06477c721")
 
-        /*
-         * BVP1 = Bluetooth Video Player, versión 1.
-         * Sirve para detectar datos dañados o incompatibles.
-         */
-        private const val FRAME_MAGIC =
-            0x42565031
-
-        private const val PROTOCOL_VERSION =
-            1
-
-        private const val FRAME_TYPE_TEXT =
-            1
-
-        private const val FRAME_TYPE_BINARY =
-            2
-
-        /*
-         * Cada fragmento individual puede medir como máximo
-         * 512 KB. Para video usaremos bloques mucho menores.
-         */
-        private const val MAX_FRAME_SIZE =
-            512 * 1024
+        private const val FRAME_MAGIC = 0x42565031
+        private const val PROTOCOL_VERSION = 1
+        private const val FRAME_TYPE_TEXT = 1
+        private const val FRAME_TYPE_BINARY = 2
+        private const val MAX_FRAME_SIZE = 512 * 1024
     }
 
-    private val mainHandler =
-        Handler(Looper.getMainLooper())
-
-    private val sessionCounter =
-        AtomicInteger(0)
-
-    private val outputLock =
-        Any()
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val sessionCounter = AtomicInteger(0)
+    private val outputLock = Any()
 
     @Volatile
-    private var serverSocket:
-            BluetoothServerSocket? = null
+    private var serverSocket: BluetoothServerSocket? = null
 
     @Volatile
-    private var connectedSocket:
-            BluetoothSocket? = null
+    private var connectedSocket: BluetoothSocket? = null
 
     @Volatile
-    private var connectedInput:
-            DataInputStream? = null
+    private var connectedInput: DataInputStream? = null
 
     @Volatile
-    private var connectedOutput:
-            DataOutputStream? = null
+    private var connectedOutput: DataOutputStream? = null
 
     @Volatile
-    private var connectionThread:
-            Thread? = null
+    private var connectionThread: Thread? = null
 
-    /**
-     * Inicia el dispositivo como servidor RFCOMM.
-     *
-     * onMessageReceived recibe mensajes JSON o texto.
-     * onBinaryReceived recibirá posteriormente bloques de video.
-     */
+    @Volatile
+    private var sendExecutor: ExecutorService? = null
+
     @SuppressLint("MissingPermission")
     fun startServer(
         onStatusChanged: (String) -> Unit,
         onMessageReceived: (String) -> Unit,
         onBinaryReceived: (ByteArray) -> Unit = {}
     ) {
-        val sessionId =
-            beginNewSession()
+        val sessionId = beginNewSession()
 
         connectionThread = thread(
             name = "BluetoothServerThread",
@@ -104,104 +73,65 @@ class BluetoothConnectionManager(
         ) {
             try {
                 postStatus(
-                    sessionId = sessionId,
-                    status =
-                        "Servidor esperando una conexión...",
-                    callback = onStatusChanged
+                    sessionId,
+                    "Servidor esperando una conexión...",
+                    onStatusChanged
                 )
 
-                val newServerSocket =
-                    bluetoothAdapter
-                        .listenUsingRfcommWithServiceRecord(
-                            SERVICE_NAME,
-                            SERVICE_UUID
-                        )
+                val listeningSocket =
+                    bluetoothAdapter.listenUsingRfcommWithServiceRecord(
+                        SERVICE_NAME,
+                        SERVICE_UUID
+                    )
 
-                serverSocket =
-                    newServerSocket
-
-                /*
-                 * accept() es bloqueante y por eso se ejecuta
-                 * dentro de este hilo secundario.
-                 */
-                val socket =
-                    newServerSocket.accept()
+                serverSocket = listeningSocket
+                val socket = listeningSocket.accept()
 
                 if (!isCurrentSession(sessionId)) {
                     socket.close()
                     return@thread
                 }
 
-                connectedSocket =
-                    socket
+                connectedSocket = socket
+                runCatching { listeningSocket.close() }
+                serverSocket = null
 
-                runCatching {
-                    newServerSocket.close()
-                }
+                val input = DataInputStream(
+                    BufferedInputStream(socket.inputStream)
+                )
+                val output = DataOutputStream(
+                    BufferedOutputStream(socket.outputStream)
+                )
 
-                serverSocket =
-                    null
-
-                val input =
-                    DataInputStream(
-                        BufferedInputStream(
-                            socket.inputStream
-                        )
-                    )
-
-                val output =
-                    DataOutputStream(
-                        BufferedOutputStream(
-                            socket.outputStream
-                        )
-                    )
-
-                connectedInput =
-                    input
-
-                connectedOutput =
-                    output
+                connectedInput = input
+                connectedOutput = output
 
                 postStatus(
-                    sessionId = sessionId,
-                    status =
-                        "Conectado con ${
-                            remoteDeviceName(socket)
-                        }",
-                    callback = onStatusChanged
+                    sessionId,
+                    "Conectado con ${remoteDeviceName(socket)}",
+                    onStatusChanged
                 )
 
                 readFrames(
                     sessionId = sessionId,
                     socket = socket,
                     input = input,
-                    onStatusChanged =
-                        onStatusChanged,
-                    onMessageReceived =
-                        onMessageReceived,
-                    onBinaryReceived =
-                        onBinaryReceived
+                    onStatusChanged = onStatusChanged,
+                    onMessageReceived = onMessageReceived,
+                    onBinaryReceived = onBinaryReceived
                 )
             } catch (error: Exception) {
                 postStatus(
-                    sessionId = sessionId,
-                    status =
-                        "Error del servidor: ${
-                            error.readableMessage()
-                        }",
-                    callback = onStatusChanged
+                    sessionId,
+                    "Error del servidor: ${error.readableMessage()}",
+                    onStatusChanged
                 )
             } finally {
-                closeResourcesForSession(
-                    sessionId
-                )
+                closeResourcesForSession(sessionId)
             }
         }
     }
 
-    /**
-     * Conecta al cliente con un dispositivo emparejado.
-     */
     @SuppressLint("MissingPermission")
     fun connectToServer(
         deviceAddress: String,
@@ -209,8 +139,7 @@ class BluetoothConnectionManager(
         onMessageReceived: (String) -> Unit,
         onBinaryReceived: (ByteArray) -> Unit = {}
     ) {
-        val sessionId =
-            beginNewSession()
+        val sessionId = beginNewSession()
 
         connectionThread = thread(
             name = "BluetoothClientThread",
@@ -218,45 +147,25 @@ class BluetoothConnectionManager(
         ) {
             try {
                 postStatus(
-                    sessionId = sessionId,
-                    status =
-                        "Preparando conexión...",
-                    callback = onStatusChanged
+                    sessionId,
+                    "Preparando conexión...",
+                    onStatusChanged
                 )
 
-                /*
-                 * El descubrimiento hace más lenta e inestable
-                 * una conexión RFCOMM.
-                 */
                 bluetoothAdapter.cancelDiscovery()
 
-                val device =
-                    bluetoothAdapter.getRemoteDevice(
-                        deviceAddress
-                    )
-
+                val device = bluetoothAdapter.getRemoteDevice(deviceAddress)
                 val socket =
-                    device
-                        .createRfcommSocketToServiceRecord(
-                            SERVICE_UUID
-                        )
+                    device.createRfcommSocketToServiceRecord(SERVICE_UUID)
 
-                connectedSocket =
-                    socket
+                connectedSocket = socket
 
                 postStatus(
-                    sessionId = sessionId,
-                    status =
-                        "Conectando con ${
-                            device.name
-                                ?: device.address
-                        }...",
-                    callback = onStatusChanged
+                    sessionId,
+                    "Conectando con ${device.name ?: device.address}...",
+                    onStatusChanged
                 )
 
-                /*
-                 * connect() también es bloqueante.
-                 */
                 socket.connect()
 
                 if (!isCurrentSession(sessionId)) {
@@ -264,115 +173,68 @@ class BluetoothConnectionManager(
                     return@thread
                 }
 
-                val input =
-                    DataInputStream(
-                        BufferedInputStream(
-                            socket.inputStream
-                        )
-                    )
-
-                val output =
-                    DataOutputStream(
-                        BufferedOutputStream(
-                            socket.outputStream
-                        )
-                    )
-
-                connectedInput =
-                    input
-
-                connectedOutput =
-                    output
-
-                postStatus(
-                    sessionId = sessionId,
-                    status =
-                        "Conectado con ${
-                            remoteDeviceName(socket)
-                        }",
-                    callback = onStatusChanged
+                val input = DataInputStream(
+                    BufferedInputStream(socket.inputStream)
+                )
+                val output = DataOutputStream(
+                    BufferedOutputStream(socket.outputStream)
                 )
 
-                /*
-                 * Conservamos el saludo inicial utilizado
-                 * por la interfaz actual.
-                 */
+                connectedInput = input
+                connectedOutput = output
+
+                postStatus(
+                    sessionId,
+                    "Conectado con ${remoteDeviceName(socket)}",
+                    onStatusChanged
+                )
+
                 writeFrame(
+                    sessionId = sessionId,
                     frameType = FRAME_TYPE_TEXT,
-                    payload =
-                        BluetoothProtocol
-                            .hello(
-                                "Hola desde el cliente"
-                            )
-                            .toByteArray(
-                                StandardCharsets.UTF_8
-                            )
+                    payload = BluetoothProtocol
+                        .hello("Hola desde el cliente")
+                        .toByteArray(StandardCharsets.UTF_8)
                 )
 
                 readFrames(
                     sessionId = sessionId,
                     socket = socket,
                     input = input,
-                    onStatusChanged =
-                        onStatusChanged,
-                    onMessageReceived =
-                        onMessageReceived,
-                    onBinaryReceived =
-                        onBinaryReceived
+                    onStatusChanged = onStatusChanged,
+                    onMessageReceived = onMessageReceived,
+                    onBinaryReceived = onBinaryReceived
                 )
             } catch (error: Exception) {
                 postStatus(
-                    sessionId = sessionId,
-                    status =
-                        "Error de conexión: ${
-                            error.readableMessage()
-                        }",
-                    callback = onStatusChanged
+                    sessionId,
+                    "Error de conexión: ${error.readableMessage()}",
+                    onStatusChanged
                 )
             } finally {
-                closeResourcesForSession(
-                    sessionId
-                )
+                closeResourcesForSession(sessionId)
             }
         }
     }
 
-    /**
-     * Envía JSON o texto UTF-8.
-     *
-     * La búsqueda y las solicitudes de reproducción
-     * continúan utilizando este método.
-     */
     fun sendMessage(
         message: String,
         onError: (String) -> Unit = {}
     ) {
-        val payload =
-            message.toByteArray(
-                StandardCharsets.UTF_8
-            )
-
         sendFrameAsync(
             frameType = FRAME_TYPE_TEXT,
-            payload = payload,
+            payload = message.toByteArray(StandardCharsets.UTF_8),
             onError = onError
         )
     }
 
-    /**
-     * Envía datos binarios sin Base64 y sin convertirlos a texto.
-     *
-     * Se usará para bloques de archivos y video.
-     */
     fun sendBinary(
         data: ByteArray,
         onError: (String) -> Unit = {}
     ) {
         if (data.isEmpty()) {
             mainHandler.post {
-                onError(
-                    "No se pueden enviar datos binarios vacíos."
-                )
+                onError("No se pueden enviar datos binarios vacíos.")
             }
             return
         }
@@ -390,36 +252,26 @@ class BluetoothConnectionManager(
                 connectedOutput != null
     }
 
-    /**
-     * Cierra servidor, conexión, streams e hilo actual.
-     */
     fun close() {
         sessionCounter.incrementAndGet()
         closeResources()
     }
 
     private fun beginNewSession(): Int {
-        closeResources()
-        return sessionCounter.incrementAndGet()
+        close()
+        val sessionId = sessionCounter.incrementAndGet()
+        sendExecutor = Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "BluetoothWriterThread").apply {
+                isDaemon = true
+            }
+        }
+        return sessionId
     }
 
-    private fun isCurrentSession(
-        sessionId: Int
-    ): Boolean {
-        return sessionCounter.get() ==
-                sessionId
+    private fun isCurrentSession(sessionId: Int): Boolean {
+        return sessionCounter.get() == sessionId
     }
 
-    /**
-     * Lee continuamente las tramas recibidas.
-     *
-     * Formato:
-     * MAGIC       4 bytes
-     * VERSION     1 byte
-     * TYPE        1 byte
-     * LENGTH      4 bytes
-     * PAYLOAD     N bytes
-     */
     private fun readFrames(
         sessionId: Int,
         socket: BluetoothSocket,
@@ -429,73 +281,45 @@ class BluetoothConnectionManager(
         onBinaryReceived: (ByteArray) -> Unit
     ) {
         try {
-            while (
-                isCurrentSession(sessionId) &&
-                socket.isConnected
-            ) {
-                val magic =
-                    input.readInt()
-
+            while (isCurrentSession(sessionId) && socket.isConnected) {
+                val magic = input.readInt()
                 if (magic != FRAME_MAGIC) {
-                    throw IOException(
-                        "Cabecera Bluetooth inválida."
-                    )
+                    throw IOException("Cabecera Bluetooth inválida.")
                 }
 
-                val version =
-                    input.readUnsignedByte()
-
-                if (
-                    version !=
-                    PROTOCOL_VERSION
-                ) {
+                val version = input.readUnsignedByte()
+                if (version != PROTOCOL_VERSION) {
                     throw IOException(
                         "Versión de protocolo no compatible: $version."
                     )
                 }
 
-                val frameType =
-                    input.readUnsignedByte()
+                val frameType = input.readUnsignedByte()
+                val payloadLength = input.readInt()
 
-                val payloadLength =
-                    input.readInt()
-
-                if (
-                    payloadLength < 0 ||
-                    payloadLength >
-                    MAX_FRAME_SIZE
-                ) {
+                if (payloadLength < 0 || payloadLength > MAX_FRAME_SIZE) {
                     throw IOException(
                         "Tamaño de trama inválido: $payloadLength bytes."
                     )
                 }
 
-                val payload =
-                    ByteArray(payloadLength)
-
+                val payload = ByteArray(payloadLength)
                 input.readFully(payload)
 
                 when (frameType) {
                     FRAME_TYPE_TEXT -> {
-                        val message =
-                            payload.toString(
-                                StandardCharsets.UTF_8
-                            )
-
                         postMessage(
-                            sessionId = sessionId,
-                            message = message,
-                            callback =
-                                onMessageReceived
+                            sessionId,
+                            payload.toString(StandardCharsets.UTF_8),
+                            onMessageReceived
                         )
                     }
 
                     FRAME_TYPE_BINARY -> {
                         postBinary(
-                            sessionId = sessionId,
-                            data = payload,
-                            callback =
-                                onBinaryReceived
+                            sessionId,
+                            payload,
+                            onBinaryReceived
                         )
                     }
 
@@ -507,16 +331,13 @@ class BluetoothConnectionManager(
                 }
             }
         } catch (_: EOFException) {
-            /*
-             * El dispositivo remoto cerró la conexión.
-             */
+            // El dispositivo remoto cerró la conexión.
         }
 
         postStatus(
-            sessionId = sessionId,
-            status =
-                "Conexión finalizada",
-            callback = onStatusChanged
+            sessionId,
+            "Conexión finalizada",
+            onStatusChanged
         )
     }
 
@@ -536,83 +357,73 @@ class BluetoothConnectionManager(
 
         if (!isConnected()) {
             mainHandler.post {
-                onError(
-                    "No existe una conexión Bluetooth activa."
-                )
+                onError("No existe una conexión Bluetooth activa.")
             }
             return
         }
 
-        thread(
-            name = "BluetoothSendThread",
-            start = true
-        ) {
-            try {
-                writeFrame(
-                    frameType = frameType,
-                    payload = payload
-                )
-            } catch (error: Exception) {
-                mainHandler.post {
-                    onError(
-                        "No se pudo enviar: ${
-                            error.readableMessage()
-                        }"
+        val sessionId = sessionCounter.get()
+        val executor = sendExecutor
+
+        if (executor == null || executor.isShutdown) {
+            mainHandler.post {
+                onError("El canal de envío no está disponible.")
+            }
+            return
+        }
+
+        try {
+            executor.execute {
+                try {
+                    writeFrame(
+                        sessionId = sessionId,
+                        frameType = frameType,
+                        payload = payload
                     )
+                } catch (error: Exception) {
+                    mainHandler.post {
+                        onError(
+                            "No se pudo enviar: ${error.readableMessage()}"
+                        )
+                    }
                 }
+            }
+        } catch (_: RejectedExecutionException) {
+            mainHandler.post {
+                onError("El canal de envío ya fue cerrado.")
             }
         }
     }
 
-    /**
-     * synchronized evita que dos envíos mezclen sus bytes.
-     */
     private fun writeFrame(
+        sessionId: Int,
         frameType: Int,
         payload: ByteArray
     ) {
+        if (!isCurrentSession(sessionId)) {
+            throw IOException("La sesión Bluetooth cambió.")
+        }
+
         synchronized(outputLock) {
-            val output =
-                connectedOutput
-                    ?: throw IOException(
-                        "El canal de salida no está disponible."
-                    )
+            val output = connectedOutput
+                ?: throw IOException(
+                    "El canal de salida no está disponible."
+                )
 
-            output.writeInt(
-                FRAME_MAGIC
-            )
-
-            output.writeByte(
-                PROTOCOL_VERSION
-            )
-
-            output.writeByte(
-                frameType
-            )
-
-            output.writeInt(
-                payload.size
-            )
-
-            output.write(
-                payload
-            )
-
+            output.writeInt(FRAME_MAGIC)
+            output.writeByte(PROTOCOL_VERSION)
+            output.writeByte(frameType)
+            output.writeInt(payload.size)
+            output.write(payload)
             output.flush()
         }
     }
 
     @SuppressLint("MissingPermission")
-    private fun remoteDeviceName(
-        socket: BluetoothSocket
-    ): String {
-        val device =
-            socket.remoteDevice
-
+    private fun remoteDeviceName(socket: BluetoothSocket): String {
+        val device = socket.remoteDevice
         return device.name
-            ?.takeIf {
-                it.isNotBlank()
-            }
+            ?.takeIf { it.isNotBlank() }
             ?: device.address
     }
 
@@ -621,14 +432,10 @@ class BluetoothConnectionManager(
         status: String,
         callback: (String) -> Unit
     ) {
-        if (!isCurrentSession(sessionId)) {
-            return
-        }
+        if (!isCurrentSession(sessionId)) return
 
         mainHandler.post {
-            if (
-                isCurrentSession(sessionId)
-            ) {
+            if (isCurrentSession(sessionId)) {
                 callback(status)
             }
         }
@@ -639,14 +446,10 @@ class BluetoothConnectionManager(
         message: String,
         callback: (String) -> Unit
     ) {
-        if (!isCurrentSession(sessionId)) {
-            return
-        }
+        if (!isCurrentSession(sessionId)) return
 
         mainHandler.post {
-            if (
-                isCurrentSession(sessionId)
-            ) {
+            if (isCurrentSession(sessionId)) {
                 callback(message)
             }
         }
@@ -657,70 +460,40 @@ class BluetoothConnectionManager(
         data: ByteArray,
         callback: (ByteArray) -> Unit
     ) {
-        if (!isCurrentSession(sessionId)) {
-            return
-        }
+        if (!isCurrentSession(sessionId)) return
 
         mainHandler.post {
-            if (
-                isCurrentSession(sessionId)
-            ) {
+            if (isCurrentSession(sessionId)) {
                 callback(data)
             }
         }
     }
 
-    private fun closeResourcesForSession(
-        sessionId: Int
-    ) {
-        if (!isCurrentSession(sessionId)) {
-            return
-        }
-
+    private fun closeResourcesForSession(sessionId: Int) {
+        if (!isCurrentSession(sessionId)) return
         closeResources()
     }
 
     private fun closeResources() {
-        runCatching {
-            serverSocket?.close()
-        }
-
-        runCatching {
-            connectedInput?.close()
-        }
-
-        runCatching {
-            connectedOutput?.close()
-        }
-
-        runCatching {
-            connectedSocket?.close()
-        }
+        runCatching { serverSocket?.close() }
+        runCatching { connectedInput?.close() }
+        runCatching { connectedOutput?.close() }
+        runCatching { connectedSocket?.close() }
+        runCatching { sendExecutor?.shutdownNow() }
 
         connectionThread?.interrupt()
 
-        serverSocket =
-            null
-
-        connectedInput =
-            null
-
-        connectedOutput =
-            null
-
-        connectedSocket =
-            null
-
-        connectionThread =
-            null
+        serverSocket = null
+        connectedInput = null
+        connectedOutput = null
+        connectedSocket = null
+        connectionThread = null
+        sendExecutor = null
     }
 
-    private fun Throwable.readableMessage():
-            String {
+    private fun Throwable.readableMessage(): String {
         return message
-            ?.takeIf {
-                it.isNotBlank()
-            }
+            ?.takeIf { it.isNotBlank() }
             ?: javaClass.simpleName
     }
 }

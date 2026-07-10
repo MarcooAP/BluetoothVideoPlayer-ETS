@@ -31,6 +31,22 @@ sealed class BluetoothMessage {
         val message: String
     ) : BluetoothMessage()
 
+    data class BinaryTestRequest(
+        val sizeBytes: Int
+    ) : BluetoothMessage()
+
+    data class BinaryTestInfo(
+        val sizeBytes: Int,
+        val sha256: String
+    ) : BluetoothMessage()
+
+    data class BinaryTestResult(
+        val success: Boolean,
+        val receivedBytes: Int,
+        val sha256: String,
+        val message: String
+    ) : BluetoothMessage()
+
     data class ErrorMessage(
         val message: String
     ) : BluetoothMessage()
@@ -48,6 +64,9 @@ object BluetoothProtocol {
     private const val TYPE_SEARCH_RESULTS = "SEARCH_RESULTS"
     private const val TYPE_PLAY_REQUEST = "PLAY_REQUEST"
     private const val TYPE_PLAY_PREPARING = "PLAY_PREPARING"
+    private const val TYPE_BINARY_TEST_REQUEST = "BINARY_TEST_REQUEST"
+    private const val TYPE_BINARY_TEST_INFO = "BINARY_TEST_INFO"
+    private const val TYPE_BINARY_TEST_RESULT = "BINARY_TEST_RESULT"
     private const val TYPE_ERROR = "ERROR"
 
     fun hello(text: String): String {
@@ -114,6 +133,39 @@ object BluetoothProtocol {
             .toString()
     }
 
+    fun binaryTestRequest(sizeBytes: Int): String {
+        return JSONObject()
+            .put("type", TYPE_BINARY_TEST_REQUEST)
+            .put("sizeBytes", sizeBytes)
+            .toString()
+    }
+
+    fun binaryTestInfo(
+        sizeBytes: Int,
+        sha256: String
+    ): String {
+        return JSONObject()
+            .put("type", TYPE_BINARY_TEST_INFO)
+            .put("sizeBytes", sizeBytes)
+            .put("sha256", sha256)
+            .toString()
+    }
+
+    fun binaryTestResult(
+        success: Boolean,
+        receivedBytes: Int,
+        sha256: String,
+        message: String
+    ): String {
+        return JSONObject()
+            .put("type", TYPE_BINARY_TEST_RESULT)
+            .put("success", success)
+            .put("receivedBytes", receivedBytes)
+            .put("sha256", sha256)
+            .put("message", message)
+            .toString()
+    }
+
     fun error(message: String): String {
         return JSONObject()
             .put("type", TYPE_ERROR)
@@ -155,12 +207,8 @@ object BluetoothProtocol {
                         val item =
                             array.optJSONObject(index) ?: continue
 
-                        val videoId =
-                            item.optString("videoId")
-
-                        if (videoId.isBlank()) {
-                            continue
-                        }
+                        val videoId = item.optString("videoId")
+                        if (videoId.isBlank()) continue
 
                         results += YouTubeVideoResult(
                             videoId = videoId,
@@ -172,39 +220,53 @@ object BluetoothProtocol {
                         )
                     }
 
-                    BluetoothMessage.SearchResults(
-                        items = results
-                    )
+                    BluetoothMessage.SearchResults(results)
                 }
 
                 TYPE_PLAY_REQUEST -> {
                     BluetoothMessage.PlayRequest(
-                        videoId =
-                            root.optString("videoId"),
-                        title =
-                            root.optString("title")
+                        videoId = root.optString("videoId"),
+                        title = root.optString("title")
                     )
                 }
 
                 TYPE_PLAY_PREPARING -> {
                     BluetoothMessage.PlayPreparing(
-                        videoId =
-                            root.optString("videoId"),
-                        message =
-                            root.optString("message")
+                        videoId = root.optString("videoId"),
+                        message = root.optString("message")
+                    )
+                }
+
+                TYPE_BINARY_TEST_REQUEST -> {
+                    BluetoothMessage.BinaryTestRequest(
+                        sizeBytes = root.optInt("sizeBytes")
+                    )
+                }
+
+                TYPE_BINARY_TEST_INFO -> {
+                    BluetoothMessage.BinaryTestInfo(
+                        sizeBytes = root.optInt("sizeBytes"),
+                        sha256 = root.optString("sha256")
+                    )
+                }
+
+                TYPE_BINARY_TEST_RESULT -> {
+                    BluetoothMessage.BinaryTestResult(
+                        success = root.optBoolean("success"),
+                        receivedBytes =
+                            root.optInt("receivedBytes"),
+                        sha256 = root.optString("sha256"),
+                        message = root.optString("message")
                     )
                 }
 
                 TYPE_ERROR -> {
                     BluetoothMessage.ErrorMessage(
-                        message =
-                            root.optString("message")
+                        message = root.optString("message")
                     )
                 }
 
-                else -> {
-                    BluetoothMessage.Unknown(raw)
-                }
+                else -> BluetoothMessage.Unknown(raw)
             }
         } catch (_: Exception) {
             BluetoothMessage.Unknown(raw)
