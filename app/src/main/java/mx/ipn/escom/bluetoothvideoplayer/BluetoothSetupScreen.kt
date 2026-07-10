@@ -76,8 +76,8 @@ fun BluetoothSetupScreen(
 
     val connectionManager =
         remember(bluetoothAdapter) {
-            bluetoothAdapter?.let {
-                BluetoothConnectionManager(it)
+            bluetoothAdapter?.let { adapter ->
+                BluetoothConnectionManager(adapter)
             }
         }
 
@@ -88,8 +88,7 @@ fun BluetoothSetupScreen(
             )
         }
 
-    var permissionsGranted by
-    rememberSaveable(role.name) {
+    var permissionsGranted by rememberSaveable(role.name) {
         mutableStateOf(
             hasRequiredBluetoothPermissions(
                 context = context,
@@ -98,13 +97,11 @@ fun BluetoothSetupScreen(
         )
     }
 
-    var permissionDenied by
-    rememberSaveable(role.name) {
+    var permissionDenied by rememberSaveable(role.name) {
         mutableStateOf(false)
     }
 
-    var bluetoothEnabled by
-    rememberSaveable(role.name) {
+    var bluetoothEnabled by rememberSaveable(role.name) {
         mutableStateOf(false)
     }
 
@@ -114,23 +111,19 @@ fun BluetoothSetupScreen(
         )
     }
 
-    var selectedDeviceAddress by
-    rememberSaveable(role.name) {
+    var selectedDeviceAddress by rememberSaveable(role.name) {
         mutableStateOf<String?>(null)
     }
 
-    var connectionStatus by
-    rememberSaveable(role.name) {
+    var connectionStatus by rememberSaveable(role.name) {
         mutableStateOf("Sin conexión")
     }
 
-    var receivedMessage by
-    rememberSaveable(role.name) {
+    var receivedMessage by rememberSaveable(role.name) {
         mutableStateOf("")
     }
 
-    var connectionActive by
-    rememberSaveable(role.name) {
+    var connectionActive by rememberSaveable(role.name) {
         mutableStateOf(false)
     }
 
@@ -157,12 +150,8 @@ fun BluetoothSetupScreen(
         )
     }
 
-    LaunchedEffect(
-        discoverableSecondsRemaining
-    ) {
-        if (
-            discoverableSecondsRemaining > 0
-        ) {
+    LaunchedEffect(discoverableSecondsRemaining) {
+        if (discoverableSecondsRemaining > 0) {
             delay(1000L)
             discoverableSecondsRemaining -= 1
         }
@@ -200,16 +189,15 @@ fun BluetoothSetupScreen(
             bluetoothAdapter != null
         ) {
             pairedDevices =
-                readPairedDevices(
-                    bluetoothAdapter
-                )
+                readPairedDevices(bluetoothAdapter)
         }
     }
 
     val enableBluetoothLauncher =
         rememberLauncherForActivityResult(
-            ActivityResultContracts
-                .StartActivityForResult()
+            contract =
+                ActivityResultContracts
+                    .StartActivityForResult()
         ) {
             bluetoothEnabled =
                 bluetoothAdapter?.isEnabled == true
@@ -220,16 +208,15 @@ fun BluetoothSetupScreen(
                 bluetoothAdapter != null
             ) {
                 pairedDevices =
-                    readPairedDevices(
-                        bluetoothAdapter
-                    )
+                    readPairedDevices(bluetoothAdapter)
             }
         }
 
     val permissionLauncher =
         rememberLauncherForActivityResult(
-            ActivityResultContracts
-                .RequestMultiplePermissions()
+            contract =
+                ActivityResultContracts
+                    .RequestMultiplePermissions()
         ) {
             permissionsGranted =
                 hasRequiredBluetoothPermissions(
@@ -242,12 +229,10 @@ fun BluetoothSetupScreen(
 
             if (permissionsGranted) {
                 bluetoothEnabled =
-                    bluetoothAdapter
-                        ?.isEnabled == true
+                    bluetoothAdapter?.isEnabled == true
 
                 if (
-                    role ==
-                    BluetoothRole.CLIENT &&
+                    role == BluetoothRole.CLIENT &&
                     bluetoothEnabled &&
                     bluetoothAdapter != null
                 ) {
@@ -261,8 +246,9 @@ fun BluetoothSetupScreen(
 
     val discoverableLauncher =
         rememberLauncherForActivityResult(
-            ActivityResultContracts
-                .StartActivityForResult()
+            contract =
+                ActivityResultContracts
+                    .StartActivityForResult()
         ) { result ->
             discoverableSecondsRemaining =
                 if (result.resultCode > 0) {
@@ -282,8 +268,7 @@ fun BluetoothSetupScreen(
 
         if (
             status.startsWith("Error") ||
-            status ==
-            "Conexión finalizada"
+            status == "Conexión finalizada"
         ) {
             connectionActive = false
             searchInProgress = false
@@ -291,9 +276,7 @@ fun BluetoothSetupScreen(
     }
 
     val isConnected =
-        connectionStatus.startsWith(
-            "Conectado"
-        )
+        connectionStatus.startsWith("Conectado")
 
     Scaffold(
         modifier = Modifier.fillMaxSize()
@@ -337,8 +320,7 @@ fun BluetoothSetupScreen(
                     Text(
                         text =
                             "Este dispositivo no tiene Bluetooth compatible.",
-                        textAlign =
-                            TextAlign.Center
+                        textAlign = TextAlign.Center
                     )
                 }
 
@@ -346,8 +328,7 @@ fun BluetoothSetupScreen(
                     Text(
                         text =
                             "Se necesitan permisos Bluetooth para continuar.",
-                        textAlign =
-                            TextAlign.Center
+                        textAlign = TextAlign.Center
                     )
 
                     if (permissionDenied) {
@@ -359,14 +340,12 @@ fun BluetoothSetupScreen(
                         Text(
                             text =
                                 "Los permisos fueron rechazados.",
-                            textAlign =
-                                TextAlign.Center
+                            textAlign = TextAlign.Center
                         )
                     }
 
                     Spacer(
-                        modifier =
-                            Modifier.height(20.dp)
+                        modifier = Modifier.height(20.dp)
                     )
 
                     Button(
@@ -395,19 +374,17 @@ fun BluetoothSetupScreen(
                     )
 
                     Spacer(
-                        modifier =
-                            Modifier.height(20.dp)
+                        modifier = Modifier.height(20.dp)
                     )
 
                     Button(
                         onClick = {
-                            enableBluetoothLauncher
-                                .launch(
-                                    Intent(
-                                        BluetoothAdapter
-                                            .ACTION_REQUEST_ENABLE
-                                    )
+                            enableBluetoothLauncher.launch(
+                                Intent(
+                                    BluetoothAdapter
+                                        .ACTION_REQUEST_ENABLE
                                 )
+                            )
                         },
                         modifier =
                             Modifier.fillMaxWidth()
@@ -416,9 +393,7 @@ fun BluetoothSetupScreen(
                     }
                 }
 
-                role ==
-                        BluetoothRole.SERVER -> {
-
+                role == BluetoothRole.SERVER -> {
                     ServerContent(
                         connectionStatus =
                             connectionStatus,
@@ -441,8 +416,9 @@ fun BluetoothSetupScreen(
                                     )
                                 }
 
-                            discoverableLauncher
-                                .launch(intent)
+                            discoverableLauncher.launch(
+                                intent
+                            )
                         },
                         onStartServerClick = {
                             receivedMessage = ""
@@ -450,84 +426,104 @@ fun BluetoothSetupScreen(
                                 "Iniciando servidor..."
                             connectionActive = true
 
-                            connectionManager
-                                ?.startServer(
-                                    onStatusChanged =
-                                        onConnectionStatusChanged,
-                                    onMessageReceived =
-                                        { raw ->
+                            connectionManager?.startServer(
+                                onStatusChanged =
+                                    onConnectionStatusChanged,
+                                onMessageReceived = { raw ->
 
-                                            when (
-                                                val message =
+                                    when (
+                                        val message =
+                                            BluetoothProtocol
+                                                .parse(raw)
+                                    ) {
+                                        is BluetoothMessage.Hello -> {
+                                            receivedMessage =
+                                                message.text
+
+                                            connectionManager
+                                                .sendMessage(
                                                     BluetoothProtocol
-                                                        .parse(raw)
-                                            ) {
-                                                is BluetoothMessage.Hello -> {
-                                                    receivedMessage =
-                                                        message.text
-
-                                                    connectionManager
-                                                        .sendMessage(
-                                                            BluetoothProtocol
-                                                                .helloAck(
-                                                                    "Servidor listo para búsquedas"
-                                                                )
+                                                        .helloAck(
+                                                            "Servidor listo para búsquedas"
                                                         )
-                                                }
-
-                                                is BluetoothMessage.SearchRequest -> {
-                                                    val query =
-                                                        message.query
-
-                                                    receivedMessage =
-                                                        "Búsqueda solicitada: $query"
-
-                                                    connectionStatus =
-                                                        "Consultando YouTube..."
-
-                                                    youtubeSearchService
-                                                        .searchVideos(
-                                                            query = query,
-                                                            onSuccess =
-                                                                { results ->
-
-                                                                    connectionManager
-                                                                        .sendMessage(
-                                                                            BluetoothProtocol
-                                                                                .searchResults(
-                                                                                    results
-                                                                                )
-                                                                        )
-
-                                                                    connectionStatus =
-                                                                        "Conectado - ${results.size} resultados enviados"
-                                                                },
-                                                            onError =
-                                                                { error ->
-
-                                                                    connectionManager
-                                                                        .sendMessage(
-                                                                            BluetoothProtocol
-                                                                                .error(
-                                                                                    error
-                                                                                )
-                                                                        )
-
-                                                                    connectionStatus =
-                                                                        "Conectado - error de búsqueda"
-                                                                }
-                                                        )
-                                                }
-
-                                                is BluetoothMessage.Unknown -> {
-                                                    receivedMessage =
-                                                        message.raw
-                                                }
-
-                                                else -> Unit
-                                            }
+                                                )
                                         }
-                                )
+
+                                        is BluetoothMessage.SearchRequest -> {
+                                            val query =
+                                                message.query
+
+                                            receivedMessage =
+                                                "Búsqueda solicitada: $query"
+
+                                            connectionStatus =
+                                                "Consultando YouTube..."
+
+                                            youtubeSearchService
+                                                .searchVideos(
+                                                    query = query,
+                                                    onSuccess = { results ->
+
+                                                        connectionManager
+                                                            .sendMessage(
+                                                                BluetoothProtocol
+                                                                    .searchResults(
+                                                                        results
+                                                                    )
+                                                            )
+
+                                                        connectionStatus =
+                                                            "Conectado - ${results.size} resultados enviados"
+                                                    },
+                                                    onError = { error ->
+
+                                                        connectionManager
+                                                            .sendMessage(
+                                                                BluetoothProtocol
+                                                                    .error(
+                                                                        error
+                                                                    )
+                                                            )
+
+                                                        connectionStatus =
+                                                            "Conectado - error de búsqueda"
+                                                    }
+                                                )
+                                        }
+
+                                        is BluetoothMessage.PlayRequest -> {
+                                            receivedMessage =
+                                                "Solicitud de reproducción:\n" +
+                                                        "${message.title}\n" +
+                                                        "ID: ${message.videoId}"
+
+                                            connectionStatus =
+                                                "Preparando video solicitado..."
+
+                                            connectionManager
+                                                .sendMessage(
+                                                    BluetoothProtocol
+                                                        .playPreparing(
+                                                            videoId =
+                                                                message.videoId,
+                                                            message =
+                                                                "El servidor recibió la solicitud de reproducción."
+                                                        )
+                                                )
+
+                                            connectionStatus =
+                                                "Conectado - solicitud de reproducción recibida"
+                                        }
+
+                                        is BluetoothMessage.Unknown -> {
+                                            receivedMessage =
+                                                message.raw
+                                        }
+
+                                        else -> Unit
+                                    }
+                                }
+                            )
                         },
                         onStopClick = {
                             connectionManager?.close()
@@ -551,9 +547,12 @@ fun BluetoothSetupScreen(
                             receivedMessage,
                         connectionActive =
                             connectionActive,
-                        isConnected = isConnected,
-                        searchQuery = searchQuery,
-                        searchStatus = searchStatus,
+                        isConnected =
+                            isConnected,
+                        searchQuery =
+                            searchQuery,
+                        searchStatus =
+                            searchStatus,
                         searchInProgress =
                             searchInProgress,
                         searchResults =
@@ -578,74 +577,80 @@ fun BluetoothSetupScreen(
                                 )
                             )
                         },
-                        onConnectClick =
-                            { address ->
+                        onConnectClick = { address ->
+                            receivedMessage = ""
+                            searchResults =
+                                emptyList()
+                            searchStatus = ""
 
-                                receivedMessage = ""
-                                searchResults =
-                                    emptyList()
-                                searchStatus = ""
+                            connectionStatus =
+                                "Preparando conexión..."
+                            connectionActive = true
 
-                                connectionStatus =
-                                    "Preparando conexión..."
-                                connectionActive = true
+                            connectionManager
+                                ?.connectToServer(
+                                    deviceAddress =
+                                        address,
+                                    onStatusChanged =
+                                        onConnectionStatusChanged,
+                                    onMessageReceived = { raw ->
 
-                                connectionManager
-                                    ?.connectToServer(
-                                        deviceAddress =
-                                            address,
-                                        onStatusChanged =
-                                            onConnectionStatusChanged,
-                                        onMessageReceived =
-                                            { raw ->
-
-                                                when (
-                                                    val message =
-                                                        BluetoothProtocol
-                                                            .parse(raw)
-                                                ) {
-                                                    is BluetoothMessage.HelloAck -> {
-                                                        receivedMessage =
-                                                            message.text
-                                                    }
-
-                                                    is BluetoothMessage.SearchResults -> {
-                                                        searchResults =
-                                                            message.items
-
-                                                        searchInProgress =
-                                                            false
-
-                                                        searchStatus =
-                                                            if (
-                                                                message
-                                                                    .items
-                                                                    .isEmpty()
-                                                            ) {
-                                                                "No se encontraron videos."
-                                                            } else {
-                                                                "${message.items.size} resultados recibidos."
-                                                            }
-                                                    }
-
-                                                    is BluetoothMessage.ErrorMessage -> {
-                                                        searchInProgress =
-                                                            false
-
-                                                        searchStatus =
-                                                            message.message
-                                                    }
-
-                                                    is BluetoothMessage.Unknown -> {
-                                                        receivedMessage =
-                                                            message.raw
-                                                    }
-
-                                                    else -> Unit
-                                                }
+                                        when (
+                                            val message =
+                                                BluetoothProtocol
+                                                    .parse(raw)
+                                        ) {
+                                            is BluetoothMessage.HelloAck -> {
+                                                receivedMessage =
+                                                    message.text
                                             }
-                                    )
-                            },
+
+                                            is BluetoothMessage.SearchResults -> {
+                                                searchResults =
+                                                    message.items
+
+                                                searchInProgress =
+                                                    false
+
+                                                searchStatus =
+                                                    if (
+                                                        message
+                                                            .items
+                                                            .isEmpty()
+                                                    ) {
+                                                        "No se encontraron videos."
+                                                    } else {
+                                                        "${message.items.size} resultados recibidos."
+                                                    }
+                                            }
+
+                                            is BluetoothMessage.PlayPreparing -> {
+                                                searchInProgress =
+                                                    false
+
+                                                searchStatus =
+                                                    message.message +
+                                                            "\nVideo ID: ${message.videoId}"
+                                            }
+
+                                            is BluetoothMessage.ErrorMessage -> {
+                                                searchInProgress =
+                                                    false
+
+                                                searchStatus =
+                                                    message.message
+                                            }
+
+                                            is BluetoothMessage.Unknown -> {
+                                                receivedMessage =
+                                                    message.raw
+                                            }
+
+                                            else -> Unit
+                                        }
+                                    }
+                                )
+                        },
                         onDisconnectClick = {
                             connectionManager?.close()
                             connectionActive = false
@@ -660,12 +665,8 @@ fun BluetoothSetupScreen(
                             val query =
                                 searchQuery.trim()
 
-                            if (
-                                query.isNotBlank()
-                            ) {
-                                searchInProgress =
-                                    true
-
+                            if (query.isNotBlank()) {
+                                searchInProgress = true
                                 searchResults =
                                     emptyList()
 
@@ -679,15 +680,34 @@ fun BluetoothSetupScreen(
                                                 .searchRequest(
                                                     query
                                                 ),
-                                        onError =
-                                            { error ->
-                                                searchInProgress =
-                                                    false
-                                                searchStatus =
-                                                    error
-                                            }
+                                        onError = { error ->
+                                            searchInProgress =
+                                                false
+                                            searchStatus =
+                                                error
+                                        }
                                     )
                             }
+                        },
+                        onPlayClick = { video ->
+                            searchStatus =
+                                "Solicitando reproducción de:\n${video.title}"
+
+                            connectionManager
+                                ?.sendMessage(
+                                    message =
+                                        BluetoothProtocol
+                                            .playRequest(
+                                                videoId =
+                                                    video.videoId,
+                                                title =
+                                                    video.title
+                                            ),
+                                    onError = { error ->
+                                        searchStatus =
+                                            error
+                                    }
+                                )
                         }
                     )
                 }
@@ -723,11 +743,11 @@ private fun ServerContent(
         fontWeight = FontWeight.Bold
     )
 
-    Spacer(modifier = Modifier.height(16.dp))
+    Spacer(
+        modifier = Modifier.height(16.dp)
+    )
 
-    if (
-        discoverableSecondsRemaining > 0
-    ) {
+    if (discoverableSecondsRemaining > 0) {
         val minutes =
             discoverableSecondsRemaining / 60
 
@@ -770,7 +790,9 @@ private fun ServerContent(
         }
     }
 
-    Spacer(modifier = Modifier.height(18.dp))
+    Spacer(
+        modifier = Modifier.height(18.dp)
+    )
 
     if (
         connectionStatus.contains(
@@ -779,6 +801,10 @@ private fun ServerContent(
         ) ||
         connectionStatus.contains(
             "consultando",
+            ignoreCase = true
+        ) ||
+        connectionStatus.contains(
+            "preparando",
             ignoreCase = true
         )
     ) {
@@ -794,14 +820,18 @@ private fun ServerContent(
         textAlign = TextAlign.Center
     )
 
-    Spacer(modifier = Modifier.height(18.dp))
+    Spacer(
+        modifier = Modifier.height(18.dp)
+    )
 
     if (!connectionActive) {
         Button(
             onClick = onStartServerClick,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Iniciar servidor Bluetooth")
+            Text(
+                "Iniciar servidor Bluetooth"
+            )
         }
     } else {
         OutlinedButton(
@@ -844,7 +874,9 @@ private fun ClientContent(
     onOpenSettingsClick: () -> Unit,
     onConnectClick: (String) -> Unit,
     onDisconnectClick: () -> Unit,
-    onSearchClick: () -> Unit
+    onSearchClick: () -> Unit,
+    onPlayClick:
+        (YouTubeVideoResult) -> Unit
 ) {
     Text(
         text = "Bluetooth listo",
@@ -853,14 +885,18 @@ private fun ClientContent(
         fontWeight = FontWeight.Bold
     )
 
-    Spacer(modifier = Modifier.height(14.dp))
+    Spacer(
+        modifier = Modifier.height(14.dp)
+    )
 
     Text(
         text = "Dispositivos emparejados",
         fontWeight = FontWeight.Bold
     )
 
-    Spacer(modifier = Modifier.height(10.dp))
+    Spacer(
+        modifier = Modifier.height(10.dp)
+    )
 
     if (pairedDevices.isEmpty()) {
         Text(
@@ -869,7 +905,9 @@ private fun ClientContent(
             textAlign = TextAlign.Center
         )
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(
+            modifier = Modifier.height(12.dp)
+        )
 
         Button(
             onClick = onOpenSettingsClick,
@@ -948,7 +986,9 @@ private fun ClientContent(
         selectedDeviceAddress != null &&
         !connectionActive
     ) {
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(
+            modifier = Modifier.height(12.dp)
+        )
 
         Button(
             onClick = {
@@ -963,7 +1003,9 @@ private fun ClientContent(
     }
 
     if (connectionActive) {
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(
+            modifier = Modifier.height(12.dp)
+        )
 
         OutlinedButton(
             onClick = onDisconnectClick,
@@ -973,7 +1015,9 @@ private fun ClientContent(
         }
     }
 
-    Spacer(modifier = Modifier.height(14.dp))
+    Spacer(
+        modifier = Modifier.height(14.dp)
+    )
 
     Text(
         text = connectionStatus,
@@ -981,7 +1025,9 @@ private fun ClientContent(
     )
 
     if (receivedMessage.isNotBlank()) {
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(
+            modifier = Modifier.height(12.dp)
+        )
 
         MessageCard(
             title = "Servidor",
@@ -990,7 +1036,9 @@ private fun ClientContent(
     }
 
     if (isConnected) {
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(
+            modifier = Modifier.height(24.dp)
+        )
 
         Text(
             text = "Buscar videos de YouTube",
@@ -999,7 +1047,9 @@ private fun ClientContent(
             fontWeight = FontWeight.Bold
         )
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(
+            modifier = Modifier.height(10.dp)
+        )
 
         OutlinedTextField(
             value = searchQuery,
@@ -1014,7 +1064,9 @@ private fun ClientContent(
             modifier = Modifier.fillMaxWidth()
         )
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(
+            modifier = Modifier.height(10.dp)
+        )
 
         Button(
             onClick = onSearchClick,
@@ -1094,6 +1146,23 @@ private fun ClientContent(
                                 .typography
                                 .bodySmall
                     )
+
+                    Spacer(
+                        modifier =
+                            Modifier.height(12.dp)
+                    )
+
+                    Button(
+                        onClick = {
+                            onPlayClick(video)
+                        },
+                        modifier =
+                            Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            "Solicitar reproducción"
+                        )
+                    }
                 }
             }
         }

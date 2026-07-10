@@ -21,6 +21,16 @@ sealed class BluetoothMessage {
         val items: List<YouTubeVideoResult>
     ) : BluetoothMessage()
 
+    data class PlayRequest(
+        val videoId: String,
+        val title: String
+    ) : BluetoothMessage()
+
+    data class PlayPreparing(
+        val videoId: String,
+        val message: String
+    ) : BluetoothMessage()
+
     data class ErrorMessage(
         val message: String
     ) : BluetoothMessage()
@@ -36,29 +46,25 @@ object BluetoothProtocol {
     private const val TYPE_HELLO_ACK = "HELLO_ACK"
     private const val TYPE_SEARCH_REQUEST = "SEARCH_REQUEST"
     private const val TYPE_SEARCH_RESULTS = "SEARCH_RESULTS"
+    private const val TYPE_PLAY_REQUEST = "PLAY_REQUEST"
+    private const val TYPE_PLAY_PREPARING = "PLAY_PREPARING"
     private const val TYPE_ERROR = "ERROR"
 
-    fun hello(
-        text: String
-    ): String {
+    fun hello(text: String): String {
         return JSONObject()
             .put("type", TYPE_HELLO)
             .put("text", text)
             .toString()
     }
 
-    fun helloAck(
-        text: String
-    ): String {
+    fun helloAck(text: String): String {
         return JSONObject()
             .put("type", TYPE_HELLO_ACK)
             .put("text", text)
             .toString()
     }
 
-    fun searchRequest(
-        query: String
-    ): String {
+    fun searchRequest(query: String): String {
         return JSONObject()
             .put("type", TYPE_SEARCH_REQUEST)
             .put("query", query.trim())
@@ -75,14 +81,8 @@ object BluetoothProtocol {
                 JSONObject()
                     .put("videoId", result.videoId)
                     .put("title", result.title)
-                    .put(
-                        "channelTitle",
-                        result.channelTitle
-                    )
-                    .put(
-                        "thumbnailUrl",
-                        result.thumbnailUrl
-                    )
+                    .put("channelTitle", result.channelTitle)
+                    .put("thumbnailUrl", result.thumbnailUrl)
             )
         }
 
@@ -92,18 +92,36 @@ object BluetoothProtocol {
             .toString()
     }
 
-    fun error(
+    fun playRequest(
+        videoId: String,
+        title: String
+    ): String {
+        return JSONObject()
+            .put("type", TYPE_PLAY_REQUEST)
+            .put("videoId", videoId)
+            .put("title", title)
+            .toString()
+    }
+
+    fun playPreparing(
+        videoId: String,
         message: String
     ): String {
+        return JSONObject()
+            .put("type", TYPE_PLAY_PREPARING)
+            .put("videoId", videoId)
+            .put("message", message)
+            .toString()
+    }
+
+    fun error(message: String): String {
         return JSONObject()
             .put("type", TYPE_ERROR)
             .put("message", message)
             .toString()
     }
 
-    fun parse(
-        raw: String
-    ): BluetoothMessage {
+    fun parse(raw: String): BluetoothMessage {
         return try {
             val root = JSONObject(raw)
 
@@ -128,16 +146,14 @@ object BluetoothProtocol {
 
                 TYPE_SEARCH_RESULTS -> {
                     val array =
-                        root.optJSONArray("items")
-                            ?: JSONArray()
+                        root.optJSONArray("items") ?: JSONArray()
 
                     val results =
                         mutableListOf<YouTubeVideoResult>()
 
                     for (index in 0 until array.length()) {
                         val item =
-                            array.optJSONObject(index)
-                                ?: continue
+                            array.optJSONObject(index) ?: continue
 
                         val videoId =
                             item.optString("videoId")
@@ -148,21 +164,34 @@ object BluetoothProtocol {
 
                         results += YouTubeVideoResult(
                             videoId = videoId,
-                            title =
-                                item.optString("title"),
+                            title = item.optString("title"),
                             channelTitle =
-                                item.optString(
-                                    "channelTitle"
-                                ),
+                                item.optString("channelTitle"),
                             thumbnailUrl =
-                                item.optString(
-                                    "thumbnailUrl"
-                                )
+                                item.optString("thumbnailUrl")
                         )
                     }
 
                     BluetoothMessage.SearchResults(
                         items = results
+                    )
+                }
+
+                TYPE_PLAY_REQUEST -> {
+                    BluetoothMessage.PlayRequest(
+                        videoId =
+                            root.optString("videoId"),
+                        title =
+                            root.optString("title")
+                    )
+                }
+
+                TYPE_PLAY_PREPARING -> {
+                    BluetoothMessage.PlayPreparing(
+                        videoId =
+                            root.optString("videoId"),
+                        message =
+                            root.optString("message")
                     )
                 }
 
