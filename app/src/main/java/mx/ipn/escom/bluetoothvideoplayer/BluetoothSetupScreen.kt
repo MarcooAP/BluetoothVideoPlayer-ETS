@@ -155,6 +155,26 @@ fun BluetoothSetupScreen(
         mutableStateOf("")
     }
 
+    val incomingMediaReceiver = remember(context) {
+        IncomingMediaReceiver(context.applicationContext)
+    }
+
+    var mediaStatus by rememberSaveable {
+        mutableStateOf("")
+    }
+
+    var mediaInProgress by rememberSaveable {
+        mutableStateOf(false)
+    }
+
+    var mediaProgress by rememberSaveable {
+        mutableStateOf(0)
+    }
+
+    var receivedVideoPath by rememberSaveable {
+        mutableStateOf<String?>(null)
+    }
+
     LaunchedEffect(discoverableSecondsRemaining) {
         if (discoverableSecondsRemaining > 0) {
             delay(1000L)
@@ -165,6 +185,7 @@ fun BluetoothSetupScreen(
     DisposableEffect(connectionManager, role) {
         onDispose {
             connectionManager?.close()
+            incomingMediaReceiver.cancel()
         }
     }
 
@@ -268,6 +289,8 @@ fun BluetoothSetupScreen(
             connectionActive = false
             searchInProgress = false
             binaryTestInProgress = false
+            mediaInProgress = false
+            incomingMediaReceiver.cancel()
         }
     }
 
@@ -279,6 +302,19 @@ fun BluetoothSetupScreen(
         binaryTestInProgress = false
         expectedBinarySize = 0
         expectedBinarySha256 = ""
+    }
+
+    fun resetMediaTransfer(
+        clearPlayer: Boolean = false
+    ) {
+        incomingMediaReceiver.cancel()
+        mediaStatus = ""
+        mediaInProgress = false
+        mediaProgress = 0
+
+        if (clearPlayer) {
+            receivedVideoPath = null
+        }
     }
 
     Scaffold(
@@ -384,6 +420,7 @@ fun BluetoothSetupScreen(
                         discoverableSecondsRemaining =
                             discoverableSecondsRemaining,
                         binaryTestStatus = binaryTestStatus,
+                        mediaStatus = mediaStatus,
                         onMakeDiscoverableClick = {
                             val intent =
                                 Intent(
@@ -402,6 +439,7 @@ fun BluetoothSetupScreen(
                         onStartServerClick = {
                             receivedMessage = ""
                             resetBinaryTest()
+                            resetMediaTransfer(clearPlayer = true)
                             connectionStatus =
                                 "Iniciando servidor..."
                             connectionActive = true
@@ -543,6 +581,111 @@ fun BluetoothSetupScreen(
                                                 }
                                         }
 
+                                        BluetoothMessage.SampleMediaRequest -> {
+                                            val sampleBytes =
+                                                context.resources
+                                                    .openRawResource(
+                                                        R.raw.sample_video
+                                                    )
+                                                    .use { input ->
+                                                        input.readBytes()
+                                                    }
+
+                                            val sha256 =
+                                                MediaTransferUtils.sha256(
+                                                    sampleBytes
+                                                )
+
+                                            val chunkSize =
+                                                MediaTransferUtils
+                                                    .CHUNK_DATA_SIZE
+
+                                            val totalChunks =
+                                                (
+                                                    sampleBytes.size +
+                                                        chunkSize - 1
+                                                ) / chunkSize
+
+                                            mediaStatus =
+                                                "Enviando MP4 de prueba: " +
+                                                    "${sampleBytes.size / 1024} KB..."
+
+                                            connectionManager.sendMessage(
+                                                BluetoothProtocol.mediaStart(
+                                                    fileName =
+                                                        "video_prueba.mp4",
+                                                    totalBytes =
+                                                        sampleBytes.size
+                                                            .toLong(),
+                                                    sha256 = sha256,
+                                                    totalChunks =
+                                                        totalChunks
+                                                ),
+                                                onError = { error ->
+                                                    mediaStatus = error
+                                                }
+                                            )
+
+                                            var offset = 0
+                                            var sequence = 0
+
+                                            while (
+                                                offset < sampleBytes.size
+                                            ) {
+                                                val length =
+                                                    minOf(
+                                                        chunkSize,
+                                                        sampleBytes.size -
+                                                            offset
+                                                    )
+
+                                                val chunk =
+                                                    sampleBytes.copyOfRange(
+                                                        offset,
+                                                        offset + length
+                                                    )
+
+                                                connectionManager.sendBinary(
+                                                    MediaTransferUtils
+                                                        .wrapChunk(
+                                                            sequence =
+                                                                sequence,
+                                                            source = chunk,
+                                                            length =
+                                                                chunk.size
+                                                        ),
+                                                    onError = { error ->
+                                                        mediaStatus = error
+                                                    }
+                                                )
+
+                                                offset += length
+                                                sequence += 1
+                                            }
+
+                                            connectionManager.sendMessage(
+                                                BluetoothProtocol.mediaEnd(),
+                                                onError = { error ->
+                                                    mediaStatus = error
+                                                }
+                                            )
+
+                                            mediaStatus =
+                                                "MP4 enviado; esperando " +
+                                                    "verificación del cliente."
+                                        }
+
+                                        is BluetoothMessage.MediaResult -> {
+                                            mediaStatus = message.message
+
+                                            connectionStatus =
+                                                if (message.success) {
+                                                    "Conectado - MP4 recibido y verificado"
+                                                } else {
+                                                    "Conectado - falló la transferencia MP4"
+                                                }
+                                        }
+
                                         is BluetoothMessage.Unknown -> {
                                             receivedMessage = message.raw
                                         }
@@ -563,6 +706,7 @@ fun BluetoothSetupScreen(
                                 "Servidor detenido"
                             receivedMessage = ""
                             resetBinaryTest()
+                            resetMediaTransfer(clearPlayer = true)
                         }
                     )
                 }
@@ -583,6 +727,10 @@ fun BluetoothSetupScreen(
                         binaryTestStatus = binaryTestStatus,
                         binaryTestInProgress =
                             binaryTestInProgress,
+                        mediaStatus = mediaStatus,
+                        mediaInProgress = mediaInProgress,
+                        mediaProgress = mediaProgress,
+                        receivedVideoPath = receivedVideoPath,
                         onSearchQueryChanged = {
                             searchQuery = it
                         },
@@ -606,6 +754,7 @@ fun BluetoothSetupScreen(
                             searchResults = emptyList()
                             searchStatus = ""
                             resetBinaryTest()
+                            resetMediaTransfer(clearPlayer = true)
 
                             connectionStatus =
                                 "Preparando conexión..."
@@ -662,10 +811,78 @@ fun BluetoothSetupScreen(
                                                     "Recibiendo ${message.sizeBytes / 1024} KB..."
                                             }
 
+                                            is BluetoothMessage.MediaStart -> {
+                                                resetBinaryTest()
+                                                receivedVideoPath = null
+                                                mediaInProgress = true
+                                                mediaProgress = 0
+
+                                                try {
+                                                    incomingMediaReceiver.start(
+                                                        fileName =
+                                                            message.fileName,
+                                                        totalBytes =
+                                                            message.totalBytes,
+                                                        sha256 =
+                                                            message.sha256,
+                                                        totalChunks =
+                                                            message.totalChunks
+                                                    )
+
+                                                    mediaStatus =
+                                                        "Recibiendo " +
+                                                            "${message.totalBytes / 1024} KB..."
+                                                } catch (error: Exception) {
+                                                    mediaInProgress = false
+                                                    mediaStatus =
+                                                        error.message
+                                                            ?: "No se pudo iniciar la recepción."
+                                                }
+                                            }
+
+                                            BluetoothMessage.MediaEnd -> {
+                                                val result =
+                                                    incomingMediaReceiver
+                                                        .finish()
+
+                                                mediaInProgress = false
+                                                mediaProgress =
+                                                    if (result.success) {
+                                                        100
+                                                    } else {
+                                                        0
+                                                    }
+                                                mediaStatus =
+                                                    result.message
+                                                receivedVideoPath =
+                                                    result.file
+                                                        ?.absolutePath
+
+                                                connectionManager.sendMessage(
+                                                    BluetoothProtocol
+                                                        .mediaResult(
+                                                            success =
+                                                                result.success,
+                                                            receivedBytes =
+                                                                result.receivedBytes,
+                                                            sha256 =
+                                                                result.sha256,
+                                                            message =
+                                                                result.message
+                                                        ),
+                                                    onError = { error ->
+                                                        mediaStatus = error
+                                                    }
+                                                )
+                                            }
+
                                             is BluetoothMessage.ErrorMessage -> {
                                                 searchInProgress = false
                                                 binaryTestInProgress = false
+                                                mediaInProgress = false
                                                 searchStatus =
+                                                    message.message
+                                                mediaStatus =
                                                     message.message
                                             }
 
@@ -678,44 +895,70 @@ fun BluetoothSetupScreen(
                                         }
                                     },
                                     onBinaryReceived = { data ->
-                                        val actualSha256 =
-                                            BinaryTransferUtils.sha256(
-                                                data
-                                            )
+                                        if (
+                                            incomingMediaReceiver.isActive
+                                        ) {
+                                            try {
+                                                val progress =
+                                                    incomingMediaReceiver
+                                                        .append(data)
 
-                                        val success =
-                                            data.size ==
+                                                mediaProgress =
+                                                    progress.percent
+
+                                                mediaStatus =
+                                                    "Recibiendo MP4: " +
+                                                        "${progress.percent}% " +
+                                                        "(${progress.receivedChunks}/" +
+                                                        "${progress.totalChunks} bloques)"
+                                            } catch (error: Exception) {
+                                                incomingMediaReceiver.cancel()
+                                                mediaInProgress = false
+                                                mediaProgress = 0
+                                                mediaStatus =
+                                                    error.message
+                                                        ?: "Error al recibir el MP4."
+                                            }
+                                        } else {
+                                            val actualSha256 =
+                                                BinaryTransferUtils.sha256(
+                                                    data
+                                                )
+
+                                            val success =
+                                                data.size ==
                                                     expectedBinarySize &&
                                                     actualSha256.equals(
                                                         expectedBinarySha256,
                                                         ignoreCase = true
                                                     )
 
-                                        binaryTestInProgress = false
+                                            binaryTestInProgress = false
 
-                                        binaryTestStatus =
-                                            if (success) {
-                                                "Correcto: ${data.size / 1024} KB recibidos sin alteraciones."
-                                            } else {
-                                                "Falló la verificación: se esperaban $expectedBinarySize bytes y llegaron ${data.size}."
-                                            }
+                                            binaryTestStatus =
+                                                if (success) {
+                                                    "Correcto: ${data.size / 1024} KB recibidos sin alteraciones."
+                                                } else {
+                                                    "Falló la verificación: se esperaban $expectedBinarySize bytes y llegaron ${data.size}."
+                                                }
 
-                                        connectionManager.sendMessage(
-                                            BluetoothProtocol
-                                                .binaryTestResult(
-                                                    success = success,
-                                                    receivedBytes =
-                                                        data.size,
-                                                    sha256 =
-                                                        actualSha256,
-                                                    message =
-                                                        binaryTestStatus
-                                                ),
-                                            onError = { error ->
-                                                binaryTestStatus =
-                                                    error
-                                            }
-                                        )
+                                            connectionManager.sendMessage(
+                                                BluetoothProtocol
+                                                    .binaryTestResult(
+                                                        success = success,
+                                                        receivedBytes =
+                                                            data.size,
+                                                        sha256 =
+                                                            actualSha256,
+                                                        message =
+                                                            binaryTestStatus
+                                                    ),
+                                                onError = { error ->
+                                                    binaryTestStatus =
+                                                        error
+                                                }
+                                            )
+                                        }
                                     }
                                 )
                         },
@@ -728,6 +971,7 @@ fun BluetoothSetupScreen(
                             searchResults = emptyList()
                             searchStatus = ""
                             resetBinaryTest()
+                            resetMediaTransfer(clearPlayer = true)
                         },
                         onSearchClick = {
                             val query = searchQuery.trim()
@@ -780,6 +1024,22 @@ fun BluetoothSetupScreen(
                                     binaryTestStatus = error
                                 }
                             )
+                        },
+                        onSampleMediaClick = {
+                            mediaInProgress = true
+                            mediaProgress = 0
+                            mediaStatus =
+                                "Solicitando MP4 de prueba al servidor..."
+                            receivedVideoPath = null
+
+                            connectionManager?.sendMessage(
+                                BluetoothProtocol
+                                    .sampleMediaRequest(),
+                                onError = { error ->
+                                    mediaInProgress = false
+                                    mediaStatus = error
+                                }
+                            )
                         }
                     )
                 }
@@ -801,6 +1061,7 @@ private fun ServerContent(
     connectionActive: Boolean,
     discoverableSecondsRemaining: Int,
     binaryTestStatus: String,
+    mediaStatus: String,
     onMakeDiscoverableClick: () -> Unit,
     onStartServerClick: () -> Unit,
     onStopClick: () -> Unit
@@ -907,6 +1168,15 @@ private fun ServerContent(
             message = binaryTestStatus
         )
     }
+
+    if (mediaStatus.isNotBlank()) {
+        Spacer(modifier = Modifier.height(18.dp))
+
+        MessageCard(
+            title = "Transferencia MP4",
+            message = mediaStatus
+        )
+    }
 }
 
 @Composable
@@ -923,6 +1193,10 @@ private fun ClientContent(
     searchResults: List<YouTubeVideoResult>,
     binaryTestStatus: String,
     binaryTestInProgress: Boolean,
+    mediaStatus: String,
+    mediaInProgress: Boolean,
+    mediaProgress: Int,
+    receivedVideoPath: String?,
     onSearchQueryChanged: (String) -> Unit,
     onDeviceSelected: (String) -> Unit,
     onRefreshClick: () -> Unit,
@@ -931,7 +1205,8 @@ private fun ClientContent(
     onDisconnectClick: () -> Unit,
     onSearchClick: () -> Unit,
     onPlayClick: (YouTubeVideoResult) -> Unit,
-    onBinaryTestClick: () -> Unit
+    onBinaryTestClick: () -> Unit,
+    onSampleMediaClick: () -> Unit
 ) {
     Text(
         text = "Bluetooth listo",
@@ -1094,6 +1369,56 @@ private fun ClientContent(
             MessageCard(
                 title = "Resultado de la prueba",
                 message = binaryTestStatus
+            )
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Text(
+            text = "Prueba de reproducción MP4",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Button(
+            onClick = onSampleMediaClick,
+            enabled = !mediaInProgress,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Solicitar y reproducir MP4 de prueba")
+        }
+
+        if (mediaInProgress) {
+            Spacer(modifier = Modifier.height(12.dp))
+            CircularProgressIndicator()
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("$mediaProgress%")
+        }
+
+        if (mediaStatus.isNotBlank()) {
+            Spacer(modifier = Modifier.height(12.dp))
+
+            MessageCard(
+                title = "Transferencia multimedia",
+                message = mediaStatus
+            )
+        }
+
+        if (receivedVideoPath != null) {
+            Spacer(modifier = Modifier.height(14.dp))
+
+            Text(
+                text = "Video recibido por Bluetooth",
+                fontWeight = FontWeight.Bold
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            LocalVideoPlayer(
+                filePath = receivedVideoPath
             )
         }
 

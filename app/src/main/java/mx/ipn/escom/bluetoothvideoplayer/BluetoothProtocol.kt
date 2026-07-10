@@ -47,6 +47,24 @@ sealed class BluetoothMessage {
         val message: String
     ) : BluetoothMessage()
 
+    data object SampleMediaRequest : BluetoothMessage()
+
+    data class MediaStart(
+        val fileName: String,
+        val totalBytes: Long,
+        val sha256: String,
+        val totalChunks: Int
+    ) : BluetoothMessage()
+
+    data object MediaEnd : BluetoothMessage()
+
+    data class MediaResult(
+        val success: Boolean,
+        val receivedBytes: Long,
+        val sha256: String,
+        val message: String
+    ) : BluetoothMessage()
+
     data class ErrorMessage(
         val message: String
     ) : BluetoothMessage()
@@ -67,6 +85,10 @@ object BluetoothProtocol {
     private const val TYPE_BINARY_TEST_REQUEST = "BINARY_TEST_REQUEST"
     private const val TYPE_BINARY_TEST_INFO = "BINARY_TEST_INFO"
     private const val TYPE_BINARY_TEST_RESULT = "BINARY_TEST_RESULT"
+    private const val TYPE_SAMPLE_MEDIA_REQUEST = "SAMPLE_MEDIA_REQUEST"
+    private const val TYPE_MEDIA_START = "MEDIA_START"
+    private const val TYPE_MEDIA_END = "MEDIA_END"
+    private const val TYPE_MEDIA_RESULT = "MEDIA_RESULT"
     private const val TYPE_ERROR = "ERROR"
 
     fun hello(text: String): String {
@@ -166,6 +188,48 @@ object BluetoothProtocol {
             .toString()
     }
 
+    fun sampleMediaRequest(): String {
+        return JSONObject()
+            .put("type", TYPE_SAMPLE_MEDIA_REQUEST)
+            .toString()
+    }
+
+    fun mediaStart(
+        fileName: String,
+        totalBytes: Long,
+        sha256: String,
+        totalChunks: Int
+    ): String {
+        return JSONObject()
+            .put("type", TYPE_MEDIA_START)
+            .put("fileName", fileName)
+            .put("totalBytes", totalBytes)
+            .put("sha256", sha256)
+            .put("totalChunks", totalChunks)
+            .toString()
+    }
+
+    fun mediaEnd(): String {
+        return JSONObject()
+            .put("type", TYPE_MEDIA_END)
+            .toString()
+    }
+
+    fun mediaResult(
+        success: Boolean,
+        receivedBytes: Long,
+        sha256: String,
+        message: String
+    ): String {
+        return JSONObject()
+            .put("type", TYPE_MEDIA_RESULT)
+            .put("success", success)
+            .put("receivedBytes", receivedBytes)
+            .put("sha256", sha256)
+            .put("message", message)
+            .toString()
+    }
+
     fun error(message: String): String {
         return JSONObject()
             .put("type", TYPE_ERROR)
@@ -253,8 +317,33 @@ object BluetoothProtocol {
                 TYPE_BINARY_TEST_RESULT -> {
                     BluetoothMessage.BinaryTestResult(
                         success = root.optBoolean("success"),
-                        receivedBytes =
-                            root.optInt("receivedBytes"),
+                        receivedBytes = root.optInt("receivedBytes"),
+                        sha256 = root.optString("sha256"),
+                        message = root.optString("message")
+                    )
+                }
+
+                TYPE_SAMPLE_MEDIA_REQUEST -> {
+                    BluetoothMessage.SampleMediaRequest
+                }
+
+                TYPE_MEDIA_START -> {
+                    BluetoothMessage.MediaStart(
+                        fileName = root.optString("fileName"),
+                        totalBytes = root.optLong("totalBytes"),
+                        sha256 = root.optString("sha256"),
+                        totalChunks = root.optInt("totalChunks")
+                    )
+                }
+
+                TYPE_MEDIA_END -> {
+                    BluetoothMessage.MediaEnd
+                }
+
+                TYPE_MEDIA_RESULT -> {
+                    BluetoothMessage.MediaResult(
+                        success = root.optBoolean("success"),
+                        receivedBytes = root.optLong("receivedBytes"),
                         sha256 = root.optString("sha256"),
                         message = root.optString("message")
                     )
